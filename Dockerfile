@@ -23,8 +23,7 @@ RUN npm ci --omit=dev --ignore-scripts \
 
 RUN groupadd --gid 10001 bot \
     && useradd --uid 10001 --gid bot --create-home --shell /usr/sbin/nologin bot \
-    && install -d --owner bot --group bot --mode 0700 /app/bridge/auth \
-    && install -d --owner bot --group bot --mode 0755 /app/logs
+    && install -d --owner bot --group bot --mode 0700 /app/bridge/auth
 
 COPY --chown=bot:bot bot/ ./
 

@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { isSessionNoise } from "./infrastructure/bot/connection.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const LOG_DIR = join(__dirname, "../../logs");
+const LOG_DIR = join(__dirname, "../logs");
 mkdirSync(LOG_DIR, { recursive: true });
 const LOG_FILE = join(LOG_DIR, "bot.log");
 
