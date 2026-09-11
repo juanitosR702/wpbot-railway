@@ -18,7 +18,12 @@ export async function getDb() {
   if (connecting) return connecting;
   const { uri, name } = databaseConfig();
   connecting = (async () => {
-    client = new MongoClient(uri, { serverSelectionTimeoutMS: 10_000 });
+    client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 10_000,
+      tls: true,
+      retryWrites: true,
+      w: "majority",
+    });
     await client.connect();
     db = client.db(name);
     return db;
