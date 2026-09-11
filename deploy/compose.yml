@@ -1,0 +1,45 @@
+name: ${COMPOSE_PROJECT_NAME:?COMPOSE_PROJECT_NAME is required}
+
+services:
+  bot:
+    image: ${IMAGE_TAG:?IMAGE_TAG is required}
+    container_name: ${CONTAINER_NAME:?CONTAINER_NAME is required}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-America/Bogota}
+      PORT: "3000"
+      AUTH_DIR: /app/bridge/auth
+    ports:
+      - "127.0.0.1:${QR_HOST_PORT:?QR_HOST_PORT is required}:3000"
+    volumes:
+      - ./storage/auth:/app/bridge/auth
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    cpus: "0.75"
+    pids_limit: 256
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+    labels:
+      com.bandelion.service: bandalandbot
+      com.bandelion.environment: ${DEPLOY_ENVIRONMENT:?DEPLOY_ENVIRONMENT is required}
+      com.bandelion.managed-by: github-actions
+      com.bandelion.repository: ${DEPLOY_REPOSITORY:?DEPLOY_REPOSITORY is required}
+      com.bandelion.commit: ${DEPLOY_COMMIT:?DEPLOY_COMMIT is required}
+      com.bandelion.branch: ${DEPLOY_BRANCH:?DEPLOY_BRANCH is required}
+      com.bandelion.deployed-at: ${DEPLOYED_AT:?DEPLOYED_AT is required}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 3
