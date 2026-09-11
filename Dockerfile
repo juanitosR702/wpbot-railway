@@ -27,6 +27,8 @@ RUN groupadd --gid 10001 bot \
 
 COPY --chown=bot:bot bot/ ./
 
+RUN mkdir -p /app/bot/logs && chown bot:bot /app/bot/logs
+
 USER bot
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
