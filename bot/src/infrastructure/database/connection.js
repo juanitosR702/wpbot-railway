@@ -6,10 +6,16 @@ let db = null;
 let connecting = null;
 
 function databaseConfig() {
-  const uri = env("MONGODB_URI").trim();
+  let uri = env("MONGODB_URI").trim();
   const name = env("MONGODB_DB", "bot_whatsapp").trim();
   if (!uri) throw new Error("Falta MONGODB_URI. Configúrala en el .env.");
   if (!name) throw new Error("Falta MONGODB_DB.");
+  if (uri.endsWith("/?") || uri.endsWith("/")) {
+    uri = uri.replace(/\/?\?$/, "");
+  }
+  if (!uri.includes("?")) {
+    uri += "?retryWrites=true&w=majority";
+  }
   return { uri, name };
 }
 
