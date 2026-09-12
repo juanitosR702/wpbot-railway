@@ -29,6 +29,12 @@ export function createOwnerPolicy(providers = {}) {
   function isCreatorJid(jid, metadata = null) {
     const creatorIds = creatorJids();
     if (creatorIds.some((creatorJid) => sameParticipant(creatorJid, jid))) return true;
+
+    // Also compare plain numbers (ctx.sender is just the number, not a full JID)
+    const senderNum = String(jid || "").replace(/\D/g, "");
+    const creatorNums = creatorIds.map((c) => String(c).split("@")[0].split(":")[0].replace(/\D/g, ""));
+    if (senderNum && creatorNums.includes(senderNum)) return true;
+
     const participant = findParticipant(metadata, [jid]);
     return Boolean(
       participant &&

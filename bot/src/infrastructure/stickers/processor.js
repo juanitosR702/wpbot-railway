@@ -107,12 +107,14 @@ export async function gifToSticker(buffer) {
 export async function animatedToSticker(buffer, { mediaType, mimetype = "", maxDurationSeconds = 6 } = {}) {
   assertMediaBuffer(buffer);
   const ffmpeg = await getFfmpegCommand();
+  console.log("[stickers] animatedToSticker: ffmpeg=", ffmpeg, "mediaType=", mediaType, "mimetype=", mimetype, "bufferSize=", buffer.length);
   const dir = await mkdtemp(join(tmpdir(), "bandaland-sticker-"));
   const inputPath = join(dir, `input${fileExtensionFor(mediaType, mimetype)}`);
   const outputPath = join(dir, "sticker.webp");
 
   try {
     await writeFile(inputPath, buffer);
+    console.log("[stickers] animatedToSticker: input written to", inputPath);
 
     const filter = [
       "fps=15",

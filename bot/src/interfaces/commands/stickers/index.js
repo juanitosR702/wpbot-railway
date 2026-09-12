@@ -57,7 +57,9 @@ function selectMediaSource(ctx) {
 }
 
 async function makeSticker(ctx, source) {
+  console.log("[stickers] makeSticker:", { mediaType: source.mediaType, mimetype: source.mimetype, size: source.message?.message?.videoMessage?.fileLength || "unknown" });
   const media = await ctx.downloadMedia(source.message);
+  console.log("[stickers] media downloaded, buffer size:", media?.length || 0);
 
   if (source.mediaType === "image" && !source.mimetype.includes("gif")) {
     return imageToSticker(media);
