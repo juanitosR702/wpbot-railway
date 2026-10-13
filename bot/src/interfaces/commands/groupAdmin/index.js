@@ -10,6 +10,7 @@ const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../asset
 const KIRK_IMAGE = ["kirkeado.jpg", "kirkeado.jpeg", "kirkeado.jfif", "kirkeado.png", "kirkeado.webp"]
   .map((file) => join(ASSETS_DIR, file))
   .find((path) => existsSync(path));
+console.log("[kirk] imagen:", KIRK_IMAGE || "NO ENCONTRADA en assets");
 
 
 const DEFAULT_CONFIG = {
@@ -183,10 +184,18 @@ function makeHandler(options) {
         const displayJid = resolvePhoneJid(resolvedTarget || targetClean, auth.metadata);
         if (action === "remove") {
           const caption = `🚨 @${jidUser(displayJid)} te han kirkeado.`;
-          if (KIRK_IMAGE) {
-            await ctx.sendMessage({ image: { url: KIRK_IMAGE }, caption, mentions: [displayJid] }).catch(() => {});
-          } else {
-            await ctx.sendMessage({ text: caption, mentions: [displayJid] }).catch(() => {});
+          const payload = KIRK_IMAGE
+            ? { image: { url: KIRK_IMAGE }, caption, mentions: [displayJid] }
+            : { text: caption, mentions: [displayJid] };
+          let avisado = false;
+          for (let intento = 1; intento <= 3 && !avisado; intento += 1) {
+            try {
+              await ctx.sendMessage(payload);
+              avisado = true;
+            } catch (err) {
+              console.warn(`[kirk] aviso intento ${intento}/3 falló:`, err?.message || err);
+              await new Promise((r) => setTimeout(r, 5000 * intento));
+            }
           }
           await ctx.updateParticipants([resolvedTarget], action);
           return null;
