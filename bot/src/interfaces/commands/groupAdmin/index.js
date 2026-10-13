@@ -9,7 +9,7 @@ const DEFAULT_CONFIG = {
   linkPattern: /(https?:\/\/|chat\.whatsapp\.com\/|wa\.me\/)/i,
 };
 
-const BOT_ADMIN_COMMANDS = new Set(["close", "kick", "add", "promote", "demote", "link", "resetlink"]);
+const BOT_ADMIN_COMMANDS = new Set(["close", "kirk", "add", "promote", "demote", "link", "resetlink"]);
 
 let sharedStore = null;
 let sharedConfig = null;
@@ -135,7 +135,7 @@ function makeHandler(options) {
     if (!ctx.isCommand) return null;
 
     const adminCommands = new Set([
-      "close", "tagall", "hidetag", "kick", "add", "promote", "demote", "link", "resetlink",
+      "close", "tagall", "hidetag", "kirk", "add", "promote", "demote", "link", "resetlink",
       "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
     ]);
     if (!adminCommands.has(ctx.command)) return null;
@@ -143,7 +143,7 @@ function makeHandler(options) {
     const auth = await getAuth(ctx, ownerPolicy);
     if (!auth.ok) return auth.reason;
 
-    if (ctx.command === "kick") {
+    if (ctx.command === "kirk") {
       const kickMetadata = await ctx.getGroupMetadata();
       const kickBotPhone = ctx.botJid?.split("@")[0]?.split(":")[0];
       const kickBotLid = ctx.botLid;
@@ -173,17 +173,17 @@ function makeHandler(options) {
       if (ctx.command === "tagall") return mentionAll(ctx, auth.metadata, true);
       if (ctx.command === "hidetag") return mentionAll(ctx, auth.metadata, false);
 
-      if (ctx.command === "kick" || ctx.command === "promote" || ctx.command === "demote") {
+      if (ctx.command === "kirk" || ctx.command === "promote" || ctx.command === "demote") {
         const { raw: targetRaw, clean: targetClean } = targetJid(ctx);
         if (!targetClean) return MSG.INDICA_USUARIO;
-        if ((ctx.command === "kick" || ctx.command === "demote") && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) {
+        if ((ctx.command === "kirk" || ctx.command === "demote") && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) {
           return MSG.USUARIO_PROTEGIDO;
         }
-        const action = ctx.command === "kick" ? "remove" : ctx.command;
+        const action = ctx.command === "kirk" ? "remove" : ctx.command;
         const resolvedTarget = resolveTargetJid(targetRaw, auth.metadata);
         const displayJid = resolvePhoneJid(resolvedTarget || targetClean, auth.metadata);
         if (action === "remove") {
-          await ctx.sendMessage({ text: `🫵 @${jidUser(displayJid)} se lo gano oyo.`, mentions: [displayJid] }).catch(() => {});
+          await ctx.sendMessage({ text: `🚨 @${jidUser(displayJid)} te han kirkeado.`, mentions: [displayJid] }).catch(() => {});
           await ctx.updateParticipants([resolvedTarget], action);
           return null;
         }
@@ -308,7 +308,7 @@ export const groupAdminPlugin = {
     router.register(makeHandler(options), {
       category: "ADMINISTRACION",
       commands: [
-        "close", "tagall", "hidetag", "kick", "add", "promote", "demote", "link", "resetlink",
+        "close", "tagall", "hidetag", "kirk", "add", "promote", "demote", "link", "resetlink",
         "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
       ],
     });

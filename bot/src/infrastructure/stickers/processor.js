@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm, writeFile, access, constants } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import sharp from "sharp";
@@ -22,11 +22,17 @@ function exec(command, args) {
 }
 
 async function getFfmpegCommand() {
+  // ffmpeg-static descarga su binario en postinstall, pero el Dockerfile usa
+  // --ignore-scripts, así que el binario puede no existir. Solo se usa si el
+  // archivo existe y es ejecutable; si no, se usa el ffmpeg del sistema (apt).
   try {
     const mod = await import("ffmpeg-static");
-    if (mod.default) return mod.default;
+    if (mod.default) {
+      await access(mod.default, constants.X_OK);
+      return mod.default;
+    }
   } catch {
-    // ffmpeg-static is optional; fall back to PATH.
+    // ffmpeg-static ausente o sin binario; se usa el del PATH.
   }
   return "ffmpeg";
 }
