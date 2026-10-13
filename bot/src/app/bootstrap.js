@@ -60,6 +60,7 @@ const ownerPolicy = createOwnerPolicy({
   botLidJids: () => ownerRepository.botLidJids(),
   extraProtectedJids: () => ownerRepository.extraProtectedJids(),
 });
+console.log("[owner] BOT_LIDS configurado:", ownerRepository.botLids().length > 0);
 
 function viewOnceMedia(message) {
   let current = message;
