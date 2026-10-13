@@ -2,6 +2,14 @@ import { GroupAdminStore } from "../../../infrastructure/storage/groupAdminStore
 import { AntiNsfwStore } from "../../../infrastructure/storage/antiNsfwStore.js";
 import { MSG } from "../../../shared/messages.js";
 import { cleanJid, jidFromNumber, jidUser, participantIds, isAdminParticipant, findParticipant, resolvePhoneJid } from "../../../shared/utils/jid.js";
+import { existsSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+
+const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../assets");
+const KIRK_IMAGE = ["kirkeado.jpg", "kirkeado.jpeg", "kirkeado.png", "kirkeado.webp"]
+  .map((file) => join(ASSETS_DIR, file))
+  .find((path) => existsSync(path));
 
 
 const DEFAULT_CONFIG = {
@@ -174,7 +182,12 @@ function makeHandler(options) {
         const resolvedTarget = resolveTargetJid(targetRaw, auth.metadata);
         const displayJid = resolvePhoneJid(resolvedTarget || targetClean, auth.metadata);
         if (action === "remove") {
-          await ctx.sendMessage({ text: `🚨 @${jidUser(displayJid)} te han kirkeado.`, mentions: [displayJid] }).catch(() => {});
+          const caption = `🚨 @${jidUser(displayJid)} te han kirkeado.`;
+          if (KIRK_IMAGE) {
+            await ctx.sendMessage({ image: { url: KIRK_IMAGE }, caption, mentions: [displayJid] }).catch(() => {});
+          } else {
+            await ctx.sendMessage({ text: caption, mentions: [displayJid] }).catch(() => {});
+          }
           await ctx.updateParticipants([resolvedTarget], action);
           return null;
         }
