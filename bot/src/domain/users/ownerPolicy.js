@@ -1,4 +1,4 @@
-import { sameParticipant, participantIds, findParticipant } from "../../shared/utils/jid.js";
+import { sameParticipant, participantIds, findParticipant, isAdminParticipant } from "../../shared/utils/jid.js";
 
 /**
  * Políticas de permisos del bot. Núcleo puro del dominio: no conoce
@@ -19,11 +19,18 @@ export function createOwnerPolicy(providers = {}) {
 
   async function isBotAdmin(getGroupMetadata, botJid, botLid, cachedMeta) {
     const metadata = cachedMeta || await getGroupMetadata();
-    const botPhone = botJid?.split("@")[0]?.split(":")[0];
-    let bot = metadata.participants.find((p) => p.id?.split("@")[0]?.split(":")[0] === botPhone);
-    if (!bot) bot = metadata.participants.find((p) => p.jid?.split("@")[0] === botPhone);
-    if (!bot && botLid) bot = metadata.participants.find((p) => p.lid === botLid || p.id === botLid);
-    return bot?.admin === "admin" || bot?.admin === "superadmin";
+    // 1) Búsqueda robusta: compara contra el JID/LID de la sesión y contra
+    // los números configurados en BOT_NUMBERS (maneja @s.whatsapp.net y @lid).
+    const candidates = [botJid, botLid, ...botNumberJids()].filter(Boolean);
+    let bot = findParticipant(metadata, candidates);
+    // 2) Fallback al método anterior por número de teléfono directo.
+    if (!bot) {
+      const botPhone = botJid?.split("@")[0]?.split(":")[0];
+      bot = metadata.participants.find((p) => p.id?.split("@")[0]?.split(":")[0] === botPhone);
+      if (!bot) bot = metadata.participants.find((p) => p.jid?.split("@")[0] === botPhone);
+      if (!bot && botLid) bot = metadata.participants.find((p) => p.lid === botLid || p.id === botLid);
+    }
+    return isAdminParticipant(bot);
   }
 
   function isCreatorJid(jid, metadata = null) {
