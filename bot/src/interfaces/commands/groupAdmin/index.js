@@ -18,7 +18,7 @@ const DEFAULT_CONFIG = {
   linkPattern: /(https?:\/\/|chat\.whatsapp\.com\/|wa\.me\/)/i,
 };
 
-const BOT_ADMIN_COMMANDS = new Set(["close", "kirk", "add", "promote", "demote", "link", "resetlink"]);
+const BOT_ADMIN_COMMANDS = new Set(["close", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink"]);
 
 let sharedStore = null;
 let sharedConfig = null;
@@ -77,6 +77,24 @@ function resolveTargetJid(rawJid, metadata) {
   if (!rawJid || !metadata?.participants) return rawJid;
   const found = findParticipant(metadata, [rawJid]);
   return found?.id || rawJid;
+}
+
+async function anunciarYExpulsar(ctx, resolvedTarget, displayJid) {
+  const caption = `🚨 @${jidUser(displayJid)} te han kirkeado.`;
+  const payload = KIRK_IMAGE
+    ? { image: { url: KIRK_IMAGE }, caption, mentions: [displayJid] }
+    : { text: caption, mentions: [displayJid] };
+  for (let intento = 1; intento <= 3; intento += 1) {
+    try {
+      await ctx.sendMessage(payload);
+      break;
+    } catch (err) {
+      console.warn(`[kirk] aviso intento ${intento}/3 falló:`, err?.message || err);
+      await new Promise((r) => setTimeout(r, 5000 * intento));
+    }
+  }
+  await ctx.updateParticipants([resolvedTarget], "remove");
+  return null;
 }
 
 async function mentionAll(ctx, metadata, visible) {
@@ -144,7 +162,7 @@ function makeHandler(options) {
     if (!ctx.isCommand) return null;
 
     const adminCommands = new Set([
-      "close", "tagall", "hidetag", "kirk", "add", "promote", "demote", "link", "resetlink",
+      "close", "tagall", "hidetag", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
       "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
     ]);
     if (!adminCommands.has(ctx.command)) return null;
@@ -156,6 +174,8 @@ function makeHandler(options) {
       // Usa el chequeo central (detecta al bot por teléfono y por LID).
       const { clean: targetClean } = targetJid(ctx);
       if (targetClean && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) return MSG.USUARIO_PROTEGIDO;
+      if (!auth.botIsAdmin) return MSG.BOT_NECESITA_ADMIN;
+    } else if (ctx.command === "kirkrandom") {
       if (!auth.botIsAdmin) return MSG.BOT_NECESITA_ADMIN;
     } else if (ctx.command === "demote") {
       const { clean: targetClean } = targetJid(ctx);
@@ -183,26 +203,23 @@ function makeHandler(options) {
         const resolvedTarget = resolveTargetJid(targetRaw, auth.metadata);
         const displayJid = resolvePhoneJid(resolvedTarget || targetClean, auth.metadata);
         if (action === "remove") {
-          const caption = `🚨 @${jidUser(displayJid)} te han kirkeado.`;
-          const payload = KIRK_IMAGE
-            ? { image: { url: KIRK_IMAGE }, caption, mentions: [displayJid] }
-            : { text: caption, mentions: [displayJid] };
-          let avisado = false;
-          for (let intento = 1; intento <= 3 && !avisado; intento += 1) {
-            try {
-              await ctx.sendMessage(payload);
-              avisado = true;
-            } catch (err) {
-              console.warn(`[kirk] aviso intento ${intento}/3 falló:`, err?.message || err);
-              await new Promise((r) => setTimeout(r, 5000 * intento));
-            }
-          }
-          await ctx.updateParticipants([resolvedTarget], action);
-          return null;
+          return anunciarYExpulsar(ctx, resolvedTarget, displayJid);
         }
         await ctx.updateParticipants([resolvedTarget], action);
         const actionLabel = action === "promote" ? "promovido a admin 🌟" : "removido como admin";
         return { text: `✅ @${jidUser(displayJid)} fue ${actionLabel}.`, mentions: [displayJid] };
+      }
+
+      if (ctx.command === "kirkrandom") {
+        // Ruleta: le puede tocar a cualquiera, incluso admins.
+        // Solo respeta protegidos (creador, bot y lista !protected).
+        const candidatos = (auth.metadata.participants || []).filter(
+          (p) => !ownerPolicy.isProtectedJid(p.id, ctx, auth.metadata),
+        );
+        if (!candidatos.length) return "No hay a quién kirkear: todos son admins o están protegidos 😅";
+        const victima = candidatos[Math.floor(Math.random() * candidatos.length)];
+        const displayJid = resolvePhoneJid(victima.id, auth.metadata);
+        return anunciarYExpulsar(ctx, victima.id, displayJid);
       }
 
       if (ctx.command === "add") {
@@ -321,7 +338,7 @@ export const groupAdminPlugin = {
     router.register(makeHandler(options), {
       category: "ADMINISTRACION",
       commands: [
-        "close", "tagall", "hidetag", "kirk", "add", "promote", "demote", "link", "resetlink",
+        "close", "tagall", "hidetag", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
         "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
       ],
     });
