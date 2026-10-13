@@ -144,19 +144,10 @@ function makeHandler(options) {
     if (!auth.ok) return auth.reason;
 
     if (ctx.command === "kirk") {
-      const kickMetadata = await ctx.getGroupMetadata();
-      const kickBotPhone = ctx.botJid?.split("@")[0]?.split(":")[0];
-      const kickBotLid = ctx.botLid;
-
-      const kickBotById = kickMetadata.participants.find((p) => p.id?.split("@")[0] === kickBotPhone);
-      const kickBotByJid = kickMetadata.participants.find((p) => p.jid?.split("@")[0] === kickBotPhone);
-      const kickBotByLid = kickMetadata.participants.find((p) => kickBotLid && p.lid === kickBotLid);
-      const kickBot = kickBotById || kickBotByJid || kickBotByLid;
-      const kickBotIsAdmin = kickBot?.admin === "admin" || kickBot?.admin === "superadmin";
-
+      // Usa el chequeo central (detecta al bot por teléfono y por LID).
       const { clean: targetClean } = targetJid(ctx);
       if (targetClean && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) return MSG.USUARIO_PROTEGIDO;
-      if (!kickBotIsAdmin) return MSG.BOT_NECESITA_ADMIN;
+      if (!auth.botIsAdmin) return MSG.BOT_NECESITA_ADMIN;
     } else if (ctx.command === "demote") {
       const { clean: targetClean } = targetJid(ctx);
       if (targetClean && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) return MSG.USUARIO_PROTEGIDO;

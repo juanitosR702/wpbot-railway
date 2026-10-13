@@ -8,9 +8,9 @@ import { addStickerMetadata } from "./metadata.js";
 const MAX_STICKER_BYTES = 512 * 1024;
 const MAX_INPUT_BYTES = 20 * 1024 * 1024;
 
-function exec(command, args) {
+function exec(command, args, { timeoutMs = 90000 } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { windowsHide: true }, (error, stdout, stderr) => {
+    execFile(command, args, { windowsHide: true, timeout: timeoutMs }, (error, stdout, stderr) => {
       if (error) {
         error.stderr = stderr;
         reject(error);
@@ -137,6 +137,7 @@ export async function animatedToSticker(buffer, { mediaType, mimetype = "", maxD
       ]);
 
       const webp = await readFile(outputPath);
+      console.log("[stickers] animatedToSticker: quality=", quality, "outputSize=", webp.length);
       if (webp.length <= MAX_STICKER_BYTES || quality === 90) {
         return addStickerMetadata(webp);
       }
