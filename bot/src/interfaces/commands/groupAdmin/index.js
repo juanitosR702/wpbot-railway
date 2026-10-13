@@ -6,7 +6,7 @@ import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
-const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../assets");
+const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "assets");
 const KIRK_IMAGE = ["kirkeado.jpg", "kirkeado.jpeg", "kirkeado.jfif", "kirkeado.png", "kirkeado.webp"]
   .map((file) => join(ASSETS_DIR, file))
   .find((path) => existsSync(path));
