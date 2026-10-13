@@ -36,6 +36,9 @@ async function getAuth(ctx, ownerPolicy) {
     ctx.raw.participantLid,
   ].filter(Boolean);
   const sender = findParticipant(metadata, senderIds);
+  try {
+    console.log("[auth-debug] cmd senderIds=", JSON.stringify(senderIds), "found=", sender?.id || "(none)", "admin=", sender?.admin ?? null);
+  } catch {}
 
   if (!isAdminParticipant(sender)) {
     console.warn("[group_admin] SOLO_ADMIN: senderIds=", JSON.stringify(senderIds), "-> found:", sender?.id || "(none)", "| sample participants:", JSON.stringify((metadata?.participants || []).slice(0, 3)));
