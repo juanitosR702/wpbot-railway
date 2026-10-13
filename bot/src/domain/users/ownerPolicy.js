@@ -7,6 +7,7 @@ import { sameParticipant, participantIds, findParticipant, isAdminParticipant } 
  * providers = {
  *   creatorJids: () => string[],
  *   botNumberJids: () => string[],
+ *   botLidJids: () => string[],
  *   extraProtectedJids: () => string[],
  * }
  */
@@ -14,14 +15,16 @@ export function createOwnerPolicy(providers = {}) {
   const {
     creatorJids = () => [],
     botNumberJids = () => [],
+    botLidJids = () => [],
     extraProtectedJids = () => [],
   } = providers;
 
   async function isBotAdmin(getGroupMetadata, botJid, botLid, cachedMeta) {
     const metadata = cachedMeta || await getGroupMetadata();
-    // 1) Búsqueda robusta: compara contra el JID/LID de la sesión y contra
-    // los números configurados en BOT_NUMBERS (maneja @s.whatsapp.net y @lid).
-    const candidates = [botJid, botLid, ...botNumberJids()].filter(Boolean);
+    // Búsqueda robusta: JID/LID de la sesión + números configurados
+    // (BOT_NUMBERS) + LIDs configurados (BOT_LIDS). Maneja
+    // @s.whatsapp.net y @lid.
+    const candidates = [botJid, botLid, ...botNumberJids(), ...botLidJids()].filter(Boolean);
     let bot = findParticipant(metadata, candidates);
     // 2) Fallback al método anterior por número de teléfono directo.
     if (!bot) {

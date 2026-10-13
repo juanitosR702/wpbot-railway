@@ -36,9 +36,6 @@ async function getAuth(ctx, ownerPolicy) {
     ctx.raw.participantLid,
   ].filter(Boolean);
   const sender = findParticipant(metadata, senderIds);
-  try {
-    console.log("[auth-debug] cmd senderIds=", JSON.stringify(senderIds), "found=", sender?.id || "(none)", "admin=", sender?.admin ?? null);
-  } catch {}
 
   if (!isAdminParticipant(sender)) {
     console.warn("[group_admin] SOLO_ADMIN: senderIds=", JSON.stringify(senderIds), "-> found:", sender?.id || "(none)", "| sample participants:", JSON.stringify((metadata?.participants || []).slice(0, 3)));
@@ -147,11 +144,6 @@ function makeHandler(options) {
     if (!auth.ok) return auth.reason;
 
     if (ctx.command === "kirk") {
-      // DEBUG TEMPORAL: ver por qué no detecta admin al bot
-      try {
-        const dbgParts = (auth.metadata?.participants || []).map((p) => ({ id: p.id, lid: p.lid, jid: p.jid, admin: p.admin }));
-        console.log("[kirk-debug] botJid=", ctx.botJid, "botLid=", ctx.botLid, "botIsAdmin=", auth.botIsAdmin, "parts=", JSON.stringify(dbgParts).slice(0, 1500));
-      } catch {}
       // Usa el chequeo central (detecta al bot por teléfono y por LID).
       const { clean: targetClean } = targetJid(ctx);
       if (targetClean && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) return MSG.USUARIO_PROTEGIDO;

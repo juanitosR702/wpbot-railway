@@ -57,6 +57,7 @@ const ownerRepository = createOwnerRepository();
 const ownerPolicy = createOwnerPolicy({
   creatorJids: () => ownerRepository.creatorJids(),
   botNumberJids: () => ownerRepository.botNumberJids(),
+  botLidJids: () => ownerRepository.botLidJids(),
   extraProtectedJids: () => ownerRepository.extraProtectedJids(),
 });
 

@@ -27,7 +27,6 @@ console.warn = (...args) => {
   logToFile(...args);
 };
 
-console.log("[build] prod-d023350-kirk-debug");
 const MONITOR_INTERVAL = 10_000;
 
 setInterval(() => {

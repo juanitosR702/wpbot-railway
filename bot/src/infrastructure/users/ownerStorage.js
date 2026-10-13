@@ -60,6 +60,27 @@ export function botNumberJids() {
   return botNumbers().map(jidFromNumber).filter(Boolean);
 }
 
+// LID del bot (en grupos nuevos WhatsApp identifica por @lid, que es un
+// número DISTINTO al teléfono). Se configura con BOT_LIDS=58601255227546
+// (se aceptan varios separados por coma, con o sin @lid).
+export function botLids() {
+  const configured = env("BOT_LIDS", "")
+    .split(",")
+    .map((item) => {
+      const text = String(item || "").trim();
+      if (text.includes("@lid")) return text.split("@")[0].split(":")[0].replace(/\D/g, "");
+      return text.replace(/\D/g, "");
+    })
+    .filter(Boolean);
+  return configured;
+}
+
+export function botLidJids() {
+  return botLids()
+    .map((lid) => (lid ? `${lid}@lid` : null))
+    .filter(Boolean);
+}
+
 export function extraProtectedEntries() {
   return {
     numbers: _state.numbers.map((item) => String(item).replace(/\D/g, "")).filter(Boolean),
@@ -96,6 +117,8 @@ export function createOwnerRepository() {
     botNumbers,
     creatorJids,
     botNumberJids,
+    botLids,
+    botLidJids,
     extraProtectedEntries,
     extraProtectedJids,
     addProtectedTarget,
