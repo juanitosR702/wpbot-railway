@@ -56,18 +56,9 @@ function mentionedJids(ctx) {
   return ctx.raw.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
 }
 
-async function mentionsCreator(ctx, ownerPolicy) {
-  const metadata = ctx.isGroup ? await ctx.getGroupMetadata().catch(() => null) : null;
-  return mentionedJids(ctx).some((jid) => ownerPolicy.isCreatorJid(jid, metadata));
-}
-
 function makeHandler(startedAt, deps) {
   const { ownerPolicy, ownerRepository } = deps;
   return async (ctx) => {
-    if (!ctx.isCommand && ctx.isGroup && (await mentionsCreator(ctx, ownerPolicy)) && !(await isCreator(ctx, ownerPolicy))) {
-      return "Ey, no molesten a mi creador 😅 Si necesitas ayuda, usa el comando help.";
-    }
-
     if (!ctx.isCommand || !COMMANDS.includes(ctx.command)) return null;
 
     if (ctx.command === "creador" || ctx.command === "owner") {
