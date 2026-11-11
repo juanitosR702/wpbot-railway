@@ -11,7 +11,7 @@ La aplicación usa `AUTH_DIR`; en contenedor vale `/app/bridge/auth` y se monta 
 El servicio HTTP interno ofrece:
 
 - `GET /health`: proceso, ping real de MongoDB, estado de WhatsApp, uptime y timestamp. Devuelve 200 si el proceso y MongoDB funcionan; `ready` sólo es `true` cuando WhatsApp también está conectado. Así el primer despliegue puede quedar saludable mientras se escanea el QR.
-- `GET /qr?token=...`: PNG del QR, protegido por `QR_ACCESS_TOKEN`.
+- `GET /qr?token=...`: visor HTML del QR (refresco automático cada 3 s), protegido por `QR_ACCESS_TOKEN`. `GET /qr.png?token=...` sirve el PNG crudo y `GET /qr/status?token=...` el JSON de estado que consume el visor.
 
 Compose publica el puerto exclusivamente en `127.0.0.1:3000`. No se abre al Internet ni se modifica SSH.
 

@@ -13,6 +13,7 @@ import { createOwnerRepository, initOwnerStorage } from "../infrastructure/users
 import { createOwnerPolicy } from "../domain/users/ownerPolicy.js";
 import { createCloudApiClient } from "../infrastructure/cloudapi/graphClient.js";
 import { createCloudWebhookHandler, extractMediaId } from "../interfaces/webhook/cloudWebhook.js";
+import { renderQrViewer } from "../interfaces/web/qrPage.js";
 import { join } from "path";
 
 import { antiNsfwPlugin } from "../interfaces/commands/antiNsfw/index.js";
@@ -91,6 +92,7 @@ function viewOnceMedia(message) {
   return isViewOnce && media ? { content: current, media } : null;
 }
 let currentQr = null;
+let currentQrAt = 0;
 let qrServer = null;
 let shuttingDown = false;
 const startedAt = Date.now();
@@ -112,6 +114,17 @@ function matchesToken(received, expected) {
   const left = Buffer.from(received);
   const right = Buffer.from(expected);
   return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function qrStatus() {
+  return {
+    active: Boolean(currentQr),
+    connected: connection.isConnected(),
+    qrUpdatedAt: currentQrAt,
+    qrAgeSeconds: currentQr ? Math.max(0, Math.floor((Date.now() - currentQrAt) / 1000)) : null,
+    uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+    now: Date.now(),
+  };
 }
 
 function startHttpServer(webhookHandler) {
@@ -143,29 +156,65 @@ function startHttpServer(webhookHandler) {
       await webhookHandler(request, response, url);
       return;
     }
-    if (request.method !== "GET" || url.pathname !== "/qr" || !token || !matchesToken(url.searchParams.get("token"), token)) {
+
+    const isViewer = url.pathname === "/" || url.pathname === "/qr" || url.pathname === "/qr/";
+    const isPng = url.pathname === "/qr.png";
+    const isStatus = url.pathname === "/qr/status";
+    if (
+      request.method !== "GET" ||
+      (!isViewer && !isPng && !isStatus) ||
+      !token ||
+      !matchesToken(url.searchParams.get("token"), token)
+    ) {
       response.writeHead(token ? 404 : 503, { "Cache-Control": "no-store" });
       response.end();
       return;
     }
-    if (!currentQr) {
-      response.writeHead(404, { "Cache-Control": "no-store", "Content-Type": "text/plain; charset=utf-8" });
-      response.end("Aún no hay un QR activo. Reinicia la sesión del bot y recarga esta página.");
-      return;
-    }
-    try {
-      const image = await qrcode.toBuffer(currentQr, { type: "png", width: 420, margin: 2 });
+
+    if (isStatus) {
       response.writeHead(200, {
-        "Content-Type": "image/png",
-        "Cache-Control": "no-store, no-cache, must-revalidate, private",
-        "Pragma": "no-cache",
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
       });
-      response.end(image);
-    } catch {
-      response.writeHead(500, { "Cache-Control": "no-store" });
-      response.end();
+      response.end(JSON.stringify(qrStatus()));
+      return;
     }
+
+    if (isPng) {
+      if (!currentQr) {
+        response.writeHead(404, { "Cache-Control": "no-store", "Content-Type": "text/plain; charset=utf-8" });
+        response.end("Aún no hay un QR activo. Reinicia la sesión del bot y recarga esta página.");
+        return;
+      }
+      try {
+        const image = await qrcode.toBuffer(currentQr, { type: "png", width: 420, margin: 2 });
+        response.writeHead(200, {
+          "Content-Type": "image/png",
+          "Cache-Control": "no-store, no-cache, must-revalidate, private",
+          "Pragma": "no-cache",
+          "X-Content-Type-Options": "nosniff",
+        });
+        response.end(image);
+      } catch {
+        response.writeHead(500, { "Cache-Control": "no-store" });
+        response.end();
+      }
+      return;
+    }
+
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate, private",
+      "Pragma": "no-cache",
+      "Referrer-Policy": "no-referrer",
+      "X-Frame-Options": "DENY",
+      "X-Content-Type-Options": "nosniff",
+      "X-Robots-Tag": "noindex, nofollow",
+      "Content-Security-Policy":
+        "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    });
+    response.end(renderQrViewer({ token }));
   });
   server.listen(port, "0.0.0.0", () => console.log(`[http] Servidor escuchando en el puerto ${port}.`));
   return server;
@@ -295,6 +344,8 @@ qrServer = startHttpServer(webhookHandler);
 
 
 connection.on("ready", async (user) => {
+  currentQr = null;
+  currentQrAt = 0;
   console.log(`[bot] Conectado como: ${cleanJid(user.id)}`);
   await initOwnerStorage();
   connection.sendMessage(user.id, "Bot iniciado correctamente");
@@ -403,6 +454,7 @@ connection.on("message", async (msg) => {
 
 connection.on("qr", (qr) => {
   currentQr = qr;
+  currentQrAt = Date.now();
   console.log("[bot] QR recibido. Disponible en el visor privado.");
 });
 

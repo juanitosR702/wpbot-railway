@@ -29,7 +29,11 @@
 - **Auth**: `AUTH_PATH = env("AUTH_DIR", "../bridge/auth")` se resuelve contra CWD. Local (CWD=`bot/`) → `bridge/auth` del repo; Docker (CWD=`/app/bot`) → `/app/bridge/auth`. Al hacer logout/forbidden borra la sesión y pide QR nuevo
 
 ## QR y /health (operación crítica)
-- No hay QR en terminal. `bootstrap.js` levanta visor HTTP: `GET /qr?token=<QR_ACCESS_TOKEN>` en `PORT` (default 3000). Token con `timingSafeEqual`; sin token → 503, token mal → 404, sin QR activo → 404 con texto
+- No hay QR en terminal. `bootstrap.js` levanta el visor HTTP en `PORT` (default 3000). Todo exige `QR_ACCESS_TOKEN` y se compara con `timingSafeEqual`; sin token → 503, token mal → 404:
+  - `GET /` o `/qr?token=...` → visor HTML (`interfaces/web/qrPage.js`), refresca solo cada 3 s y muestra QR, estado y antigüedad del código
+  - `GET /qr.png?token=...` → PNG crudo (sin QR activo → 404 con texto)
+  - `GET /qr/status?token=...` → JSON `{active, connected, qrUpdatedAt, qrAgeSeconds, uptimeSeconds}` que consume el visor
+- Origen del QR: Baileys `connection.update` (campo `qr`) → `Connection` emite `"qr"` → `bootstrap.js` guarda `currentQr`/`currentQrAt`. Al `ready` se limpia para no mostrar un código ya usado.
 - `GET /health` devuelve 200 siempre (incluso degradado): `ready` solo es `true` con Mongo + WhatsApp conectados. Es lo que se chequea tras escanear
 - QR rota (~60s): ante fallo de escaneo, recargar la página
 - Baileys normal pre-vinculación: `restartRequired` (515), `unavailableService` (503), `timedOut` (408) con reconnect. No son bugs

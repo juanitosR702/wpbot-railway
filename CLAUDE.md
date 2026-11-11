@@ -80,7 +80,7 @@ Every store subclasses `BaseStore(collectionName)`, keeps one MongoDB document p
 ### Bootstrap responsibilities (`app/bootstrap.js`)
 
 - Builds the `Connection` (auth path `../../bridge/auth`, i.e. repo-root `bridge/auth`) and `Router`, then registers all plugins in order.
-- Runs a minimal `http` server exposing `GET /qr?token=<QR_ACCESS_TOKEN>` — a token-gated PNG QR viewer (constant-time compare via `crypto.timingSafeEqual`), returns 404 if no token configured or QR not yet available.
+- Runs a minimal `http` server with the token-gated QR viewer: `GET /qr?token=<QR_ACCESS_TOKEN>` (HTML page in `interfaces/web/qrPage.js`, auto-refreshes every 3 s), `GET /qr.png?token=...` (raw PNG) and `GET /qr/status?token=...` (JSON state consumed by the page). Constant-time compare via `crypto.timingSafeEqual`; 503 without token, 404 with a wrong one.
 - Re-forwards view-once media (image/video) back into the chat before routing.
 - Wires `group-participants.update` for both welcome/bye messages (`groupAdmin` plugin) and auto-promotion (`shared/utils/autoPromote.js`).
 - On `SIGINT`, disconnects cleanly.
