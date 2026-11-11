@@ -1,0 +1,4 @@
+# Los scripts de shell deben conservar LF aunque core.autocrlf esté activo:
+# un entrypoint con CRLF falla en Linux ("bad interpreter").
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
