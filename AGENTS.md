@@ -39,9 +39,11 @@
 - Baileys normal pre-vinculación: `restartRequired` (515), `unavailableService` (503), `timedOut` (408) con reconnect. No son bugs
 
 ## Railway (producción)
-- CLI linkeado al proyecto; solo lectura segura: `railway status`, `railway logs --lines N`. Redeploy de lo pusheado: `railway redeploy --from-source -y`. **Nunca imprimas valores de variables** (solo nombres + longitudes)
+- CLI linkeado al proyecto; solo lectura segura: `railway status`, `railway logs --lines N`. **Nunca imprimas valores de variables** (solo nombres + longitudes)
+- El servicio **no** tiene source de GitHub: `git push` NO despliega. Código nuevo → `railway up -c -m "..."` (rebuild Docker, ~5 min). Cambios solo de variables → `railway redeploy -y` (reusa la imagen)
 - Plan free exige flag **serverless** (el bot se duerme); en plan pago va **OFF** (24/7)
 - Volumen en `/app/bridge/auth` obligatorio: sin él cada redeploy pierde sesión y pide QR nuevo
+- Railway monta el volumen como **root** y el bot corre como uid 10001 (`bot`): sin ajuste, Baileys falla al guardar `creds.json` con `EACCES`. Por eso `docker-entrypoint.sh` arranca como root, hace `chown -R bot:bot "$AUTH_DIR"` y baja privilegios con `gosu bot`. No pongas `USER bot` antes del ENTRYPOINT ni borres `gosu` del `apt-get install`
 - `.env` está en `.dockerignore`: la imagen no lleva secretos, todo sale de Railway Variables
 - `Dockerfile` HEALTHCHECK usa `http://127.0.0.1:${PORT:-3000}/health`
 

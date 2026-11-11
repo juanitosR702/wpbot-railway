@@ -7,7 +7,7 @@ ENV NODE_ENV=production \
     AUTH_DIR=/app/bridge/auth
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg tini tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg gosu tini tzdata \
     && curl --fail --location --retry 3 \
       "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux" \
       --output /usr/local/bin/yt-dlp \
@@ -29,10 +29,12 @@ COPY --chown=bot:bot bot/ ./
 
 RUN mkdir -p /app/bot/logs && chown bot:bot /app/bot/logs
 
-USER bot
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
-  CMD curl --fail --silent --show-error http://127.0.0.1:${PORT:-3000}/health >/dev/null
+  CMD curl --fail --silent --show-error "http://127.0.0.1:${PORT:-3000}/health" >/dev/null
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# Arranca como root solo para ajustar el volumen y luego baja a `bot` (gosu).
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "src/index.js"]
