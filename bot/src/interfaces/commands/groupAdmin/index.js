@@ -2,6 +2,7 @@ import { GroupAdminStore } from "../../../infrastructure/storage/groupAdminStore
 import { AntiNsfwStore } from "../../../infrastructure/storage/antiNsfwStore.js";
 import { MSG } from "../../../shared/messages.js";
 import { cleanJid, jidFromNumber, jidUser, participantIds, isAdminParticipant, findParticipant, resolvePhoneJid } from "../../../shared/utils/jid.js";
+import { renderWelcomeTemplate, WELCOME_VARS_HELP } from "../../../shared/utils/welcomeTemplate.js";
 import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -61,6 +62,9 @@ function needsBotAdmin(command) {
 }
 
 function commandText(ctx, skip = 0) {
+  // `ctx.commandBody` conserva espacios y saltos de línea originales; `args`
+  // los normaliza y rompe los mensajes de bienvenida/despedida con formato.
+  if (skip === 0 && typeof ctx.commandBody === "string") return ctx.commandBody.trim();
   return (ctx.args || []).slice(skip).join(" ").trim();
 }
 
@@ -264,12 +268,16 @@ function makeHandler(options) {
       return `👋 Bienvenidas ${group.welcome ? "activadas ✅" : "desactivadas ❌"}.`;
     }
     if (ctx.command === "setwelcome") {
-      group.welcomeText = commandText(ctx) || group.welcomeText;
+      const text = commandText(ctx);
+      if (!text) return `Uso: ${ctx.prefix}setwelcome <texto>\n${WELCOME_VARS_HELP}`;
+      group.welcomeText = text;
       store.save();
       return "✅ Mensaje de bienvenida actualizado.";
     }
     if (ctx.command === "setbye") {
-      group.byeText = commandText(ctx) || group.byeText;
+      const text = commandText(ctx);
+      if (!text) return `Uso: ${ctx.prefix}setbye <texto>\n${WELCOME_VARS_HELP}`;
+      group.byeText = text;
       store.save();
       return "✅ Mensaje de despedida actualizado.";
     }
@@ -323,9 +331,26 @@ export async function handleGroupParticipantsUpdate(update, services = {}, optio
   const group = store.group(cleanJid(update.id));
   if (!group.welcome) return;
 
+  // promote/demote también disparan este evento: solo saludamos al entrar/salir.
+  const action = update.action;
+  if (action !== "add" && action !== "remove") return;
+
+  let metadata = null;
+  try {
+    metadata = await services.getGroupMetadata?.(update.id);
+  } catch {
+    metadata = null;
+  }
+  const groupName = metadata?.subject || "el grupo";
+  const count = metadata?.participants?.length;
+
   for (const participant of update.participants || []) {
-    const template = update.action === "remove" ? group.byeText : group.welcomeText;
-    const text = template.replaceAll("{user}", `@${participant.split("@")[0]}`);
+    const template = action === "remove" ? group.byeText : group.welcomeText;
+    const text = renderWelcomeTemplate(template, {
+      user: `@${participant.split("@")[0]}`,
+      group: groupName,
+      count,
+    });
     await services.sendMessage?.(update.id, { text, mentions: [participant] });
   }
 }

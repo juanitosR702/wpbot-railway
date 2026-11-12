@@ -65,6 +65,7 @@ export class Router {
       phone,
       sender,
       text,
+      commandBody: input.body,
       prefix: this.prefix,
       isCommand: input.isCommand,
       command: input.command,
@@ -131,14 +132,21 @@ export class Router {
   _parseInput(text) {
     const raw = text.trim();
     if (!raw.startsWith(this.prefix)) {
-      return { isCommand: false, command: null, args: [] };
+      return { isCommand: false, command: null, args: [], body: "" };
     }
 
-    const parts = raw.slice(this.prefix.length).trim().split(/\s+/).filter(Boolean);
+    const rest = raw.slice(this.prefix.length).trim();
+    const parts = rest.split(/\s+/).filter(Boolean);
+    // `body` conserva los espacios y saltos de línea originales después del
+    // comando. `args` los normaliza, pero algunos comandos (setwelcome,
+    // setbye) necesitan el texto tal cual lo escribió el usuario.
+    const body = parts.length ? rest.slice(parts[0].length).replace(/^\s+/, "") : "";
+
     return {
       isCommand: true,
       command: parts[0]?.toLowerCase() || null,
       args: parts.slice(1),
+      body,
     };
   }
 

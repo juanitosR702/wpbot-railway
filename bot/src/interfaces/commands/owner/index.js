@@ -62,7 +62,7 @@ function makeHandler(startedAt, deps) {
     if (!ctx.isCommand || !COMMANDS.includes(ctx.command)) return null;
 
     if (ctx.command === "creador" || ctx.command === "owner") {
-      return "Mi creador es *Esquina* 🔐";
+      return "Mi creador es *juanito* 🔐";
     }
 
     if (!(await isCreator(ctx, ownerPolicy))) return MSG.SOLO_CREADOR;

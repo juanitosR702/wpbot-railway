@@ -19,7 +19,8 @@
 ## Arquitectura
 - **Hexagonal**: `domain/` no importa `infrastructure/` (regla de dependencia). Puertos en `domain/ports/` (`OwnerRepository`, `NsfwAnalyzer`, `AiClient`, `MediaDownloader`, `StateRepository`). `HALT` NO es puerto: es el sentinel del router para consumir un mensaje sin responder
 - **Composition root**: `app/bootstrap.js` crea `ownerRepository = createOwnerRepository()` (adapter en `infrastructure/users/ownerStorage.js`) y `ownerPolicy = createOwnerPolicy({...})`, y los pasa a los plugins vía `router.registerPlugin(plugin, options)`
-- **Router** (`interfaces/bot/router.js`): parsea `!command`, primer handler que devuelva non-null gana. `registerPlugin(plugin, options)` pasa deps a `plugin.register(api, options)`
+- **Router** (`interfaces/bot/router.js`): parsea `!command`, primer handler que devuelva non-null gana. `registerPlugin(plugin, options)` pasa deps a `plugin.register(api, options)`. El contexto incluye `args` (normalizados) y `commandBody` (texto original tras el comando, con espacios y saltos de línea intactos; lo usan `setwelcome`/`setbye`)
+- **Bienvenida/despedida** (`groupAdmin` + `shared/utils/welcomeTemplate.js`): variables `@user`/`{user}` (etiqueta), `{group}` (nombre del grupo) y `{count}`/`{total}` (participantes). Se renderizan al enviar, no al configurar. Solo `add`/`remove` disparan el mensaje; `promote`/`demote` se ignoran
 - **Plugins** en `interfaces/commands/<name>/index.js`, registrados en `bootstrap.js`. Reciben deps por `options` (`ownerPolicy`, `ownerRepository`, `{ router }` en bench). Plugins que usan permisos: `moderation`, `groupAdmin`, `antiNsfw` (ownerPolicy), `owner` (ownerPolicy + ownerRepository), `economy` (ownerPolicy), `ai` (ownerRepository para `botNumberJids`)
 - **`autoPromote`** (`shared/utils/autoPromote.js`): DI vía `deps = { creatorNumbers, isBotAdmin }`, se pasa desde `bootstrap.js` en `ready`
 - `minecraft` (wizard `!setserver` que **consume mensajes no-comando** vía `WIZARD_SESSIONS` en memoria), `bench` (`!bench` / `!bench stress`, corre todos los comandos con services mockeados)
@@ -64,7 +65,15 @@
 - `QR_ACCESS_TOKEN`, `PORT`, `AUTH_DIR` (Docker: `/app/bridge/auth`)
 - `NSFW_PROVIDER` (default `disabled`), `NSFW_THRESHOLD`, `NSFW_TIMEOUT_MS`, `NSFW_MAX_BYTES`, `NSFW_KICK_THRESHOLD`
 - `GEMINI_API_KEY`, `GEMINI_MODEL` (AI y provider NSFW gemini); `OPENROUTER_API_KEY`, `OPENAI_API_KEY`; `SIGHTENGINE_API_USER/SECRET`, `NUDENET_URL`, `NSFW_CUSTOM_URL`
+- `AI_PROVIDER` (`gemini`/`openai`), `AI_SYSTEM_PROMPT` (sobrescribe el prompt por defecto), `AI_COMMAND_CONFIRM_MS` (TTL de confirmación, default 90000)
 - `YTDLP_PATH` (default `yt-dlp`), `YTDLP_COOKIES`
+
+## IA con ejecución de comandos
+- El plugin `ai` responde cuando lo mencionan (o con `!ai`/`!ask`) y puede **ejecutar comandos reales** en lenguaje natural. No inventa lógica: `commandRunner.js` reinyecta un mensaje sintético con `__aiSynthetic` en el `Router`, así que aplican todas las validaciones existentes (admin, bot admin, protegidos, creador, etc.). El handler de IA ignora esos mensajes para no recursar.
+- Catálogo (`commandCatalog.js`): se construye **lazy** desde `Router.getCommands()` en el primer uso y añade descripción/nivel/palabras clave. `bench` está excluido. Coste por mención: índice compacto (~300 tokens) + 4 herramientas (`buscar_comandos`, `ver_comando`, `buscar_persona`, `ejecutar_comando`); el detalle se pide bajo demanda.
+- Niveles por comando: `user` / `admin` / `creator` (por defecto `user`). Pre-chequeo en el runner + validación del plugin original.
+- Comandos destructivos piden confirmación (`sí`/`no`, TTL `AI_COMMAND_CONFIRM_MS`, default 90 s). Confirma el mismo remitente o un admin/creador que mencione al bot. Al construir el mensaje sintético se quita al bot de `mentionedJid` para que `targetJid` no lo elija como objetivo.
+- `buscar_persona` usa `AiStore.recentMessages` (nombre + JID); si hay ambigüedad el modelo pregunta.
 
 ## Console logs
 - `[cmd] <command> (<n> args) — <phone> (<sender>) en grupo "<name>" (<id>)`

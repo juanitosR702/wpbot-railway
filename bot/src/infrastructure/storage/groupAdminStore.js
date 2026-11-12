@@ -15,8 +15,8 @@ export class GroupAdminStore extends BaseStore {
         muted: false,
         antilink: false,
         welcome: false,
-        welcomeText: "Bienvenido {user}",
-        byeText: "Adios {user}",
+        welcomeText: "Bienvenido @user",
+        byeText: "Adios @user",
         warnings: {},
       };
     }

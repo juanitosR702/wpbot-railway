@@ -56,6 +56,7 @@ export class AiStore extends BaseStore {
       at: message.at || new Date().toISOString(),
       sender: message.sender,
       name: message.name,
+      jid: message.jid || null,
       text: text.slice(0, 1000),
     });
     this.pruneMessages(jid);

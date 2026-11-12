@@ -269,7 +269,7 @@ const coreCommandsPlugin = {
 router.registerPlugin(coreCommandsPlugin);
 router.registerPlugin(groupAdminPlugin, { ownerPolicy });
 router.registerPlugin(ownerPlugin, { ownerPolicy, ownerRepository });
-router.registerPlugin(aiPlugin, { ownerRepository });
+router.registerPlugin(aiPlugin, { ownerRepository, ownerPolicy, router });
 router.registerPlugin(antiNsfwPlugin, { ownerPolicy });
 router.registerPlugin(moderationPlugin, { ownerPolicy });
 router.registerPlugin(stickersPlugin);
@@ -353,6 +353,7 @@ connection.on("ready", async (user) => {
   connection.sock?.ev?.on("group-participants.update", (update) => {
     handleGroupParticipantsUpdate(update, {
       sendMessage: (jid, content) => connection.sendMessage(jid, content),
+      getGroupMetadata: (jid) => connection.sock?.groupMetadata(jid),
     }).catch((err) => console.error("[group_admin] Error en welcome/bye:", err));
   });
 
