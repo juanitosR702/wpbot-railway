@@ -42,16 +42,15 @@ const INFO = {
   open: { desc: "Abre el grupo para que todos puedan escribir", level: A, keywords: ["abre", "abrir", "todos escriben"] },
   kickwarning: { desc: "Expulsa a quien tenga advertencias acumuladas", level: A, keywords: ["expulsa advertidos", "saca advertidos"], destructive: true, groupOnly: true },
   antinsfw: { desc: "Controla el filtro anti-NSFW (on/off/status/mode/block/unblock/blocklist)", usage: "!antinsfw on|off|status|mode|block|unblock|blocklist", level: A, keywords: ["nsfw", "contenido", "porno", "filtro", "imagenes"], destructive: true },
-  kirk: {
+  kick: {
     desc: "Expulsa a un miembro del grupo",
-    usage: "!kirk [@usuario|numero]",
+    usage: "!kick [@usuario|numero]",
     level: A,
     keywords: ["elimina", "eliminar", "expulsa", "expulsar", "saca", "sacar", "kick", "bota", "botar", "quita", "remueve"],
     destructive: true,
     needsTarget: true,
   },
   kirkrandom: { desc: "Expulsa a un miembro al azar (ruleta)", level: A, keywords: ["expulsa al azar", "ruleta"], destructive: true, groupOnly: true },
-  kick: { desc: "Alias antiguo de !kirk", level: A, keywords: ["expulsa", "elimina"], destructive: true, needsTarget: true },
   add: { desc: "Añade a alguien por número de teléfono", usage: "!add <numero>", level: A, keywords: ["agrega", "añade", "invita"], needsTarget: true },
   promote: { desc: "Hace admin a un miembro", level: A, keywords: ["asciende", "promueve", "haz admin"], destructive: true, needsTarget: true },
   demote: { desc: "Quita el admin a un miembro", level: A, keywords: ["degrada", "quita admin"], destructive: true, needsTarget: true },

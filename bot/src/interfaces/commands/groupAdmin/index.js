@@ -19,7 +19,7 @@ const DEFAULT_CONFIG = {
   linkPattern: /(https?:\/\/|chat\.whatsapp\.com\/|wa\.me\/)/i,
 };
 
-const BOT_ADMIN_COMMANDS = new Set(["close", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink"]);
+const BOT_ADMIN_COMMANDS = new Set(["close", "kick", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink"]);
 
 let sharedStore = null;
 let sharedConfig = null;
@@ -88,9 +88,12 @@ function resolveTargetJid(rawJid, metadata) {
   return found?.id || rawJid;
 }
 
-async function anunciarYExpulsar(ctx, resolvedTarget, displayJid) {
-  const caption = `🚨 @${jidUser(displayJid)} te han kirkeado.`;
-  const payload = KIRK_IMAGE
+async function anunciarYExpulsar(ctx, resolvedTarget, displayJid, { image = false } = {}) {
+  const user = jidUser(displayJid);
+  // `kick` es el comando normal: solo texto. La imagen quedó reservada para
+  // `kirk` (easter egg por escribir mal el comando) y `kirkrandom`.
+  const caption = image ? `🚨 @${user} te han kirkeado.` : `🚨 @${user} fue expulsado del grupo.`;
+  const payload = image && KIRK_IMAGE
     ? { image: { url: KIRK_IMAGE }, caption, mentions: [displayJid] }
     : { text: caption, mentions: [displayJid] };
   for (let intento = 1; intento <= 3; intento += 1) {
@@ -98,7 +101,7 @@ async function anunciarYExpulsar(ctx, resolvedTarget, displayJid) {
       await ctx.sendMessage(payload);
       break;
     } catch (err) {
-      console.warn(`[kirk] aviso intento ${intento}/3 falló:`, err?.message || err);
+      console.warn(`[expulsion] aviso intento ${intento}/3 falló:`, err?.message || err);
       await new Promise((r) => setTimeout(r, 5000 * intento));
     }
   }
@@ -171,7 +174,7 @@ function makeHandler(options) {
     if (!ctx.isCommand) return null;
 
     const adminCommands = new Set([
-      "close", "tagall", "hidetag", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
+      "close", "tagall", "hidetag", "kick", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
       "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
     ]);
     if (!adminCommands.has(ctx.command)) return null;
@@ -179,7 +182,7 @@ function makeHandler(options) {
     const auth = await getAuth(ctx, ownerPolicy);
     if (!auth.ok) return auth.reason;
 
-    if (ctx.command === "kirk") {
+    if (ctx.command === "kick" || ctx.command === "kirk") {
       // Usa el chequeo central (detecta al bot por teléfono y por LID).
       const { clean: targetClean } = targetJid(ctx);
       if (targetClean && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) return MSG.USUARIO_PROTEGIDO;
@@ -202,17 +205,21 @@ function makeHandler(options) {
       if (ctx.command === "tagall") return mentionAll(ctx, auth.metadata, true);
       if (ctx.command === "hidetag") return mentionAll(ctx, auth.metadata, false);
 
-      if (ctx.command === "kirk" || ctx.command === "promote" || ctx.command === "demote") {
+      if (ctx.command === "kick" || ctx.command === "kirk" || ctx.command === "promote" || ctx.command === "demote") {
         const { raw: targetRaw, clean: targetClean } = targetJid(ctx);
         if (!targetClean) return MSG.INDICA_USUARIO;
-        if ((ctx.command === "kirk" || ctx.command === "demote") && ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)) {
+        if (
+          (ctx.command === "kick" || ctx.command === "kirk" || ctx.command === "demote") &&
+          ownerPolicy.isProtectedJid(targetClean, ctx, auth.metadata)
+        ) {
           return MSG.USUARIO_PROTEGIDO;
         }
-        const action = ctx.command === "kirk" ? "remove" : ctx.command;
+        const isRemoval = ctx.command === "kick" || ctx.command === "kirk";
+        const action = isRemoval ? "remove" : ctx.command;
         const resolvedTarget = resolveTargetJid(targetRaw, auth.metadata);
         const displayJid = resolvePhoneJid(resolvedTarget || targetClean, auth.metadata);
         if (action === "remove") {
-          return anunciarYExpulsar(ctx, resolvedTarget, displayJid);
+          return anunciarYExpulsar(ctx, resolvedTarget, displayJid, { image: ctx.command === "kirk" });
         }
         await ctx.updateParticipants([resolvedTarget], action);
         const actionLabel = action === "promote" ? "promovido a admin 🌟" : "removido como admin";
@@ -228,7 +235,7 @@ function makeHandler(options) {
         if (!candidatos.length) return "No hay a quién kirkear: todos son admins o están protegidos 😅";
         const victima = candidatos[Math.floor(Math.random() * candidatos.length)];
         const displayJid = resolvePhoneJid(victima.id, auth.metadata);
-        return anunciarYExpulsar(ctx, victima.id, displayJid);
+        return anunciarYExpulsar(ctx, victima.id, displayJid, { image: true });
       }
 
       if (ctx.command === "add") {
@@ -368,7 +375,9 @@ export const groupAdminPlugin = {
     router.register(makeHandler(options), {
       category: "ADMINISTRACION",
       commands: [
-        "close", "tagall", "hidetag", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
+        // `kirk` no aparece aquí a propósito: es un easter egg por escribir mal
+        // `kick`. Sigue funcionando y manda la foto, pero no se anuncia.
+        "close", "tagall", "hidetag", "kick", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
         "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
       ],
     });

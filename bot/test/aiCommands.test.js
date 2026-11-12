@@ -123,7 +123,7 @@ const creatorOnlyPolicy = { isCreatorJid: (sender) => sender === "999" };
 
 test("catalogo: construye desde el router y busca por lenguaje natural", () => {
   const router = new Router();
-  router.register(() => null, { category: "ADMIN", commands: ["kirk", "promote"] });
+  router.register(() => null, { category: "ADMIN", commands: ["kick", "promote"] });
   router.register(() => null, { category: "ECONOMIA", commands: ["darcoins", "balance"] });
   router.register(() => null, { category: "NSFW", commands: ["antinsfw on"] });
   router.register(() => null, { category: "X", commands: ["bench"] });
@@ -131,24 +131,24 @@ test("catalogo: construye desde el router y busca por lenguaje natural", () => {
   const catalog = createCommandCatalog(router);
 
   // "antinsfw on" se normaliza a "antinsfw"; bench se ignora.
-  assert.deepStrictEqual(catalog.names().sort(), ["antinsfw", "balance", "darcoins", "kirk", "promote"]);
-  assert.strictEqual(catalog.get("kirk").level, LEVEL.ADMIN);
+  assert.deepStrictEqual(catalog.names().sort(), ["antinsfw", "balance", "darcoins", "kick", "promote"]);
+  assert.strictEqual(catalog.get("kick").level, LEVEL.ADMIN);
   assert.strictEqual(catalog.get("darcoins").level, LEVEL.CREATOR);
-  assert.strictEqual(catalog.search("expulsa a alguien")[0].name, "kirk");
+  assert.strictEqual(catalog.search("expulsa a alguien")[0].name, "kick");
   assert.strictEqual(catalog.search("regala monedas")[0].name, "darcoins");
 
   const index = catalog.compactIndex();
-  assert.ok(index.includes("kirk"));
+  assert.ok(index.includes("kick"));
   assert.ok(!index.includes("bench"));
 });
 
 test("runner: rechaza comandos de admin a un usuario normal", async () => {
-  const catalog = createCommandCatalog(fakeRouter(["kirk"]));
-  const router = fakeRouter(["kirk"]);
+  const catalog = createCommandCatalog(fakeRouter(["kick"]));
+  const router = fakeRouter(["kick"]);
   const runner = createCommandRunner({ router, catalog, ownerPolicy: creatorOnlyPolicy });
 
   const ctx = makeCtx({ phone: "grupo1@g.us", text: "expulsa", sender: "222" });
-  const result = await runner.run("kirk", ["777@s.whatsapp.net"], ctx);
+  const result = await runner.run("kick", ["777@s.whatsapp.net"], ctx);
 
   assert.strictEqual(result.ok, false);
   assert.match(result.error, /administradores/);
@@ -156,8 +156,8 @@ test("runner: rechaza comandos de admin a un usuario normal", async () => {
 });
 
 test("runner: permite comandos de admin a un admin y preserva menciones sin el bot", async () => {
-  const catalog = createCommandCatalog(fakeRouter(["kirk"]));
-  const router = fakeRouter(["kirk"], () => "expulsado");
+  const catalog = createCommandCatalog(fakeRouter(["kick"]));
+  const router = fakeRouter(["kick"], () => "expulsado");
   const runner = createCommandRunner({ router, catalog, ownerPolicy: creatorOnlyPolicy });
 
   const ctx = makeCtx({
@@ -168,7 +168,7 @@ test("runner: permite comandos de admin a un admin y preserva menciones sin el b
     admins: ["111@s.whatsapp.net"],
   });
 
-  const result = await runner.run("kirk", [], ctx);
+  const result = await runner.run("kick", [], ctx);
 
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.reply, "expulsado");
@@ -178,11 +178,11 @@ test("runner: permite comandos de admin a un admin y preserva menciones sin el b
 });
 
 test("plugin: comando destructivo pide confirmacion y solo ejecuta con 'si'", async () => {
-  const commands = ["kirk"];
+  const commands = ["kick"];
   const router = fakeRouter(commands, () => "🚨 @777 expulsado");
   const ledger = fakeStore();
   const client = scriptedClient([
-    { ok: true, text: "", functionCall: { name: "ejecutar_comando", args: { nombre: "kirk", argumentos: "777@s.whatsapp.net" } } },
+    { ok: true, text: "", functionCall: { name: "ejecutar_comando", args: { nombre: "kick", argumentos: "777@s.whatsapp.net" } } },
   ]);
 
   const entering = aiPlugin;
@@ -217,10 +217,10 @@ test("plugin: comando destructivo pide confirmacion y solo ejecuta con 'si'", as
 });
 
 test("plugin: un tercero no puede confirmar una accion ajena", async () => {
-  const router = fakeRouter(["kirk"], () => "expulsado");
+  const router = fakeRouter(["kick"], () => "expulsado");
   const ledger = fakeStore();
   const client = scriptedClient([
-    { ok: true, text: "", functionCall: { name: "ejecutar_comando", args: { nombre: "kirk", argumentos: "777@s.whatsapp.net" } } },
+    { ok: true, text: "", functionCall: { name: "ejecutar_comando", args: { nombre: "kick", argumentos: "777@s.whatsapp.net" } } },
   ]);
 
   aiPlugin.register(router, {

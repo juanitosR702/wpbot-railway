@@ -52,7 +52,7 @@
 - En grupos nuevos los participantes vienen como `@lid`, no como teléfono. NUNCA compares por string de teléfono a mano
 - Usa siempre `sameParticipant()` / `findParticipant()` (`shared/utils/jid.js`) y el central `ownerPolicy.isBotAdmin()` (resuelve por JID de sesión + LID + `BOT_NUMBERS` + fallback a teléfono). No dupliques la búsqueda en el plugin (ese fue el bug de `kirk`)
 - Comandos del creador: `ownerPolicy.isCreatorJid()` + metadata del grupo. `CREATOR_NUMBERS`/`BOT_NUMBERS` del env, con **defaults hardcodeados** si faltan; protegidos extra en colección Mongo `owner` vía `!protected` / `!protegidos`
-- Comando de expulsión se llama **`kirk`** (no `kick`): avisa `🚨 @user te han kirkeado.` antes del `remove`. Respeta `isProtectedJid` (creadores, bot, protegidos)
+- Comandos de expulsión: **`kick`** es el normal (solo texto, admin + bot admin, respeta `isProtectedJid`). **`kirk`** sigue existiendo como **easter egg** por escribir mal `kick`: manda la foto de `assets/kirkeado.*` y **no aparece en el menú ni en el catálogo de la IA** (se quita de `meta.commands` al registrarlo). `kirkrandom` conserva la foto
 
 ## Convenciones clave
 - Handlers: return string/object (reply) o null (pass). Router captura errores por plugin
