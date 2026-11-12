@@ -47,14 +47,19 @@ async function getAuth(ctx, ownerPolicy) {
   ].filter(Boolean);
   const sender = findParticipant(metadata, senderIds);
 
-  if (!isAdminParticipant(sender)) {
+  // El creador manda siempre. Sin esto, justo después de `autoPromote` la
+  // metadata puede traer su entrada con `admin: null` y sus propios comandos
+  // se rechazan como SOLO_ADMIN.
+  const isCreator = senderIds.some((id) => ownerPolicy.isCreatorJid(id, metadata));
+
+  if (!isAdminParticipant(sender) && !isCreator) {
     console.warn("[group_admin] SOLO_ADMIN: senderIds=", JSON.stringify(senderIds), "-> found:", sender?.id || "(none)", "| sample participants:", JSON.stringify((metadata?.participants || []).slice(0, 3)));
     return { ok: false, reason: MSG.SOLO_ADMIN };
   }
 
   const botIsAdmin = await ownerPolicy.isBotAdmin(ctx.getGroupMetadata, ctx.botJid, ctx.botLid);
 
-  return { ok: true, metadata, sender, botIsAdmin };
+  return { ok: true, metadata, sender, botIsAdmin, isCreator };
 }
 
 function needsBotAdmin(command) {
