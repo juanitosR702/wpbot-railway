@@ -78,7 +78,8 @@
 ## Control por grupo (apagado y módulos)
 - `group_settings` (`GroupSettingsStore`, singleton `getGroupSettingsStore()`): por grupo `{ botEnabled, disabledModules[] }`.
 - `!bot on|off` (admin) apaga el bot **entero** en ese grupo: no responde a nada, ni comandos ni IA, y tampoco manda bienvenidas/despedidas.
-- `!modulo on|off <modulo>` (admin) desactiva plugins concretos: `economia`, `casino`, `niveles`, `stickers`, `tiktok`, `ia`, `moderacion`, `antinsfw`, `encuestas`, `musica`, `imagen`, `minecraft`, `utilidades`, `ayuda`, `administracion`. `!modulos` lista el estado. Acepta clave, nombre de plugin o etiqueta (`economia`/`economy`/`Economía`).
+- `!modulo on|off <modulo>` (admin) desactiva plugins concretos: `economia`, `casino`, `niveles`, `stickers`, `tiktok`, `ia`, `moderacion`, `antinsfw`, `encuestas`, `musica`, `imagen`, `minecraft`, `utilidades`, `ayuda`, `administracion`. Acepta clave, nombre de plugin o etiqueta (`economia`/`economy`/`Economía`).
+- `!modulos` manda un **menú numerado con ✅/❌** (módulos + `Bienvenidas y despedidas`). El usuario responde **citando ese mensaje** con los números (`2` o `2 5`) y se alternan; también `!modulo 2`. Solo se aceptan respuestas que citen el mensaje del menú (guardado en memoria con TTL 10 min) para que un número suelto en el chat no cambie nada.
 - `Router.setGroupGate(fn)` se inyecta en `bootstrap.js`: `null` = sin restricciones, `{ disabled }` = apagado total, `{ allows(plugin) }` filtra handlers por `meta.plugin`. `GROUP_CONFIG_COMMANDS` (`!bot`, `!modulo`, `!modulos`) siempre pasan para poder reactivar aunque el bot esté apagado.
 
 

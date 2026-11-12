@@ -5,6 +5,7 @@ import { cleanJid, jidFromNumber, jidUser, participantIds, isAdminParticipant, f
 import { renderWelcomeTemplate, WELCOME_VARS_HELP } from "../../../shared/utils/welcomeTemplate.js";
 import { getGroupSettingsStore } from "../../../infrastructure/storage/groupSettingsStore.js";
 import { GROUP_MODULES, resolveModule } from "../../../shared/config/modules.js";
+import { HALT } from "../../bot/router.js";
 import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -145,6 +146,76 @@ async function addWarning(store, ctx, jid) {
   return group.warnings[jid];
 }
 
+// ---- Menú de módulos interactivo ----
+// Se guarda el id del mensaje del menú para aceptar solo respuestas que lo
+// citen (así un "2" suelto en el chat no cambia nada).
+const MODULE_MENU_TTL_MS = 10 * 60 * 1000;
+const moduleMenus = new Map();
+
+// Ajustes de grupo que no son plugins pero también se tocan desde el menú.
+const MENU_SETTINGS = [
+  { setting: "welcome", label: "Bienvenidas y despedidas", on: "activadas", off: "desactivadas" },
+];
+
+function menuEntries() {
+  return [
+    ...GROUP_MODULES.map((module) => ({ kind: "module", plugin: module.plugin, label: module.label })),
+    ...MENU_SETTINGS.map((entry) => ({ kind: "setting", setting: entry.setting, label: entry.label, ...entry })),
+  ];
+}
+
+function entryEnabled(entry, config, group) {
+  if (entry.kind === "setting") return Boolean(group[entry.setting]);
+  return !config.disabledModules.includes(entry.plugin);
+}
+
+function renderModuleMenu(ctx, config, group) {
+  const lines = menuEntries().map((entry, index) => {
+    const mark = entryEnabled(entry, config, group) ? "✅" : "❌";
+    return `${index + 1}. ${mark} ${entry.label}`;
+  });
+
+  return [
+    "⚙️ *Módulos de este grupo*",
+    "",
+    ...lines,
+    "",
+    `👉 *Responde a este mensaje* con los números que quieras cambiar. Ej: \`2\` o \`2 5\`.`,
+    `También sirve \`${ctx.prefix}modulo 2\`.`,
+  ].join("\n");
+}
+
+function parseMenuNumbers(text) {
+  const entries = menuEntries();
+  const matches = String(text || "").match(/\d{1,2}/g) || [];
+  const numbers = [...new Set(matches.map(Number))].filter((n) => n >= 1 && n <= entries.length);
+  return numbers.map((n) => entries[n - 1]).filter(Boolean);
+}
+
+function toggleEntries(entries, config, group) {
+  const disabled = new Set(config.disabledModules);
+  return entries.map((entry) => {
+    if (entry.kind === "setting") {
+      group[entry.setting] = !group[entry.setting];
+      return `${group[entry.setting] ? "✅" : "❌"} *${entry.label}* ${group[entry.setting] ? entry.on : entry.off}`;
+    }
+    if (disabled.has(entry.plugin)) {
+      disabled.delete(entry.plugin);
+      config.disabledModules = [...disabled];
+      return `✅ *${entry.label}* activado`;
+    }
+    disabled.add(entry.plugin);
+    config.disabledModules = [...disabled];
+    return `❌ *${entry.label}* desactivado`;
+  });
+}
+
+async function sendModuleMenu(ctx, config, group) {
+  const sent = await ctx.sendMessage({ text: renderModuleMenu(ctx, config, group) });
+  moduleMenus.set(ctx.phone, { at: Date.now(), messageId: sent?.key?.id });
+  return sent;
+}
+
 function makeHandler(options) {
   const { store, config } = getStore(options);
   const ownerPolicy = options.ownerPolicy;
@@ -173,7 +244,33 @@ function makeHandler(options) {
       if (!auth.ok) return "🔇 El grupo está silenciado. Solo los admins pueden usar comandos.";
     }
 
-    if (!ctx.isCommand) return null;
+    if (!ctx.isCommand) {
+      // Respuesta numérica al menú de módulos (solo si cita el mensaje del menú).
+      const pending = moduleMenus.get(ctx.phone);
+      if (pending && Date.now() - pending.at <= MODULE_MENU_TTL_MS && pending.messageId) {
+        const info = ctx.raw?.message?.extendedTextMessage?.contextInfo;
+        if (info?.stanzaId === pending.messageId) {
+          const entries = parseMenuNumbers(ctx.text);
+          if (!entries.length) {
+            return "Responde con los números del menú (ej: `2` o `2 5`).";
+          }
+          const auth = await getAuth(ctx, ownerPolicy);
+          if (!auth.ok) return auth.reason;
+          const settings = getGroupSettingsStore();
+          await settings.ready();
+          const groupConfig = settings.group(ctx.phone);
+          const changes = toggleEntries(entries, groupConfig, group);
+          await settings.save();
+          await store.save();
+          const sent = await ctx.sendMessage({
+            text: `${changes.join("\n")}\n\n${renderModuleMenu(ctx, groupConfig, group)}`,
+          });
+          moduleMenus.set(ctx.phone, { at: Date.now(), messageId: sent?.key?.id });
+          return HALT;
+        }
+      }
+      return null;
+    }
 
     const adminCommands = new Set([
       "close", "tagall", "hidetag", "kick", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
@@ -298,31 +395,35 @@ function makeHandler(options) {
     if (ctx.command === "modulos") {
       const settings = getGroupSettingsStore();
       await settings.ready();
-      const config = settings.group(ctx.phone);
-      const lines = GROUP_MODULES.map(
-        (module) => `${config.disabledModules.includes(module.plugin) ? "❌" : "✅"} \`${module.key}\` — ${module.label}`,
-      );
-      return [
-        "⚙️ *Módulos en este grupo*",
-        ...lines,
-        "",
-        `Usa ${ctx.prefix}modulo on|off <modulo>`,
-      ].join("\n");
+      await sendModuleMenu(ctx, settings.group(ctx.phone), group);
+      return HALT;
     }
 
     if (ctx.command === "modulo") {
-      const action = String(ctx.args?.[0] || "").toLowerCase();
-      const target = resolveModule((ctx.args || []).slice(1).join(" "));
-      if ((action !== "on" && action !== "off") || !target) {
-        return `Uso: ${ctx.prefix}modulo on|off <modulo>\nMira la lista con ${ctx.prefix}modulos`;
-      }
+      const args = ctx.args || [];
+      const action = String(args[0] || "").toLowerCase();
       const settings = getGroupSettingsStore();
       await settings.ready();
-      const config = settings.group(ctx.phone);
-      const disabled = new Set(config.disabledModules);
+      const groupConfig = settings.group(ctx.phone);
+
+      // `!modulo 3` alterna el elemento número 3 del menú (!modulos).
+      const index = parseInt(args[0], 10);
+      const entries = menuEntries();
+      if (!args[1] && Number.isInteger(index) && index >= 1 && index <= entries.length) {
+        const changes = toggleEntries([entries[index - 1]], groupConfig, group);
+        await settings.save();
+        await store.save();
+        return `${changes[0]}\n\n${renderModuleMenu(ctx, groupConfig, group)}`;
+      }
+
+      const target = resolveModule(args.slice(1).join(" "));
+      if ((action !== "on" && action !== "off") || !target) {
+        return `Uso: ${ctx.prefix}modulo on|off <modulo>  ·  ${ctx.prefix}modulo <numero>\nMira el menú con ${ctx.prefix}modulos`;
+      }
+      const disabled = new Set(groupConfig.disabledModules);
       if (action === "off") disabled.add(target.plugin);
       else disabled.delete(target.plugin);
-      config.disabledModules = [...disabled];
+      groupConfig.disabledModules = [...disabled];
       await settings.save();
       return action === "off"
         ? `❌ Módulo *${target.label}* desactivado en este grupo.`

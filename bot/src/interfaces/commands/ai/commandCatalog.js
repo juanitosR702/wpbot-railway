@@ -59,7 +59,7 @@ const INFO = {
   resetlink: { desc: "Revoca el enlace y genera uno nuevo", level: A, keywords: ["nuevo link", "revoca enlace"], destructive: true },
   bot: { desc: "Enciende o apaga el bot en este grupo", usage: "!bot on|off", level: A, keywords: ["apaga el bot", "enciende el bot", "desactiva el bot"], destructive: true },
   modulo: { desc: "Activa o desactiva un módulo en este grupo (economía, casino, ia...)", usage: "!modulo on|off <modulo>", level: A, keywords: ["desactiva economia", "activa modulo", "modulos del grupo"], destructive: true },
-  modulos: { desc: "Lista los módulos y su estado en este grupo", level: A, keywords: ["modulos", "funciones del grupo"] },
+  modulos: { desc: "Muestra el menú numerado de módulos para activarlos o desactivarlos", level: A, keywords: ["modulos", "funciones del grupo", "menu"] },
   tagall: { desc: "Menciona a todos los participantes", level: A, keywords: ["menciona a todos", "tag all", "avisa a todos"] },
   hidetag: { desc: "Menciona a todos sin mostrar el listado", level: A, keywords: ["menciona invisible", "hidetag"] },
   mutechat: { desc: "Silencia el grupo: solo admins usan comandos", level: A, keywords: ["silencia grupo", "mute grupo"] },
