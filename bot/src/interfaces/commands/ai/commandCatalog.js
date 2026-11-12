@@ -31,6 +31,7 @@ const INFO = {
 
   // ---- IA ----
   ai: { desc: "Pregunta libre a la IA", usage: "!ai <pregunta>", level: U, keywords: ["pregunta", "ia"] },
+  ia: { desc: "Alias de !ai", usage: "!ia <pregunta>", level: U, keywords: ["pregunta", "ia"] },
   ask: { desc: "Alias de !ai", usage: "!ask <pregunta>", level: U, keywords: ["pregunta", "ia"] },
   resume: { desc: "Resume las últimas 24h del chat", level: U, keywords: ["resumen", "resume"] },
   resumen: { desc: "Alias de !resume", level: U, keywords: ["resumen"] },

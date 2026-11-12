@@ -5,7 +5,7 @@ import { HALT } from "../../bot/router.js";
 import { createCommandCatalog } from "./commandCatalog.js";
 import { createCommandRunner } from "./commandRunner.js";
 
-const COMMANDS = ["ai", "ask", "resume", "resumen", "aireset", "aistatus"];
+const COMMANDS = ["ai", "ia", "ask", "resume", "resumen", "aireset", "aistatus"];
 const SUMMARY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_TOOL_ROUNDS = 3;
 const DEFAULT_CONFIRM_MS = 90 * 1000;
@@ -57,22 +57,9 @@ function mentionsBot(ctx, ownerRepository) {
   return mentionedJids(ctx).some((mentioned) => ids.some((id) => sameParticipant(mentioned, id)));
 }
 
-function repliesToBot(ctx, ownerRepository) {
-  const participant = contextInfoOf(ctx)?.participant;
-  if (!participant) return false;
-  return botIds(ctx, ownerRepository).some((id) => sameParticipant(participant, id));
-}
-
 function promptFrom(ctx) {
   const text = (ctx.args || []).join(" ").trim();
   return text.replace(/\s+/g, " ");
-}
-
-function promptFromMention(ctx) {
-  const mentions = mentionedJids(ctx).map((jid) => `@${jid.split("@")[0]}`);
-  let text = ctx.text || "";
-  for (const mention of mentions) text = text.replaceAll(mention, "");
-  return text.replace(/\s+/g, " ").trim() || "Responde de forma breve y util al mensaje donde te mencionaron.";
 }
 
 function trimPrompt(prompt, maxChars) {
@@ -101,12 +88,12 @@ function isRateLimited(ctx, delayMs) {
 function usage(ctx) {
   return [
     "🤖 *Asistente IA*",
-    `${ctx.prefix}ai <pregunta> — hacerme una pregunta`,
+    `${ctx.prefix}ai <pregunta> — hacerme una pregunta (también ${ctx.prefix}ia)`,
     `${ctx.prefix}resume — resumen de las últimas 24h`,
     `${ctx.prefix}aireset — borrar el historial`,
     `${ctx.prefix}aistatus — ver el estado del módulo`,
     "",
-    "También puedes mencionarme y pedirme algo: *@bot elimina a Juan*.",
+    "Solo respondo al comando. Mencionarme o responder a un mensaje mío ya no me activa.",
   ].join("\n");
 }
 
@@ -502,7 +489,7 @@ async function handleConfirmation(ctx, { router, runner, botMentioned }) {
 
   const sameSender = sameParticipant(pending.sender, ctx.sender);
   if (!sameSender) {
-    // Otro usuario solo puede confirmar si es admin/creador y menciona o responde al bot.
+    // Otro usuario solo puede confirmar si es admin/creador y menciona al bot.
     if (!botMentioned) return undefined;
     const perms = await runner?.permissionsFor(ctx);
     if (!perms?.creator && !perms?.admin) return undefined;
@@ -578,8 +565,11 @@ function makeHandler(options = {}) {
     const store = await resolveStore();
 
     const fromMe = Boolean(ctx.raw?.key?.fromMe);
-    const botMentioned =
-      !ctx.isCommand && !fromMe && (mentionsBot(ctx, ownerRepository) || repliesToBot(ctx, ownerRepository));
+    // La IA solo responde al comando explicito (!ai / !ia / !ask). Mencionar al
+    // bot o responder a uno de sus mensajes ya NO la activa: eso solo alimenta
+    // el historial y las confirmaciones.
+    const isAiCommand = !fromMe && ctx.isCommand && COMMANDS.includes(ctx.command);
+    const botMentioned = !fromMe && mentionsBot(ctx, ownerRepository);
 
     if (ctx.text && !ctx.isCommand && !fromMe) {
       store.recordMessage(ctx.phone, {
@@ -602,7 +592,7 @@ function makeHandler(options = {}) {
       if (confirmed !== undefined) return confirmed;
     }
 
-    if (!botMentioned && (!ctx.isCommand || !COMMANDS.includes(ctx.command))) return null;
+    if (!isAiCommand) return null;
 
     if (ctx.command === "aistatus") {
       const chat = store.chat(ctx.phone);
@@ -657,7 +647,7 @@ function makeHandler(options = {}) {
       return result.content;
     }
 
-    const prompt = trimPrompt(botMentioned ? promptFromMention(ctx) : promptFrom(ctx), config.maxPromptChars);
+    const prompt = trimPrompt(promptFrom(ctx), config.maxPromptChars);
     if (!prompt) return usage(ctx);
 
     if (isRateLimited(ctx, config.rateLimitMs)) {

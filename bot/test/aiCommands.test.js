@@ -78,7 +78,7 @@ function scriptedClient(responses) {
   };
 }
 
-function makeCtx({ phone, text, sender, mentions = [], command = null, args = [], group = true, admins = [] }) {
+function makeCtx({ phone, text, sender, mentions = [], command = null, args = [], group = true, admins = [], replyTo = null }) {
   const services = { sent: [] };
   const ctx = {
     phone,
@@ -103,7 +103,9 @@ function makeCtx({ phone, text, sender, mentions = [], command = null, args = []
       message: {
         extendedTextMessage: {
           text,
-          contextInfo: mentions.length ? { mentionedJid: mentions } : undefined,
+          contextInfo: mentions.length || replyTo
+            ? { ...(mentions.length ? { mentionedJid: mentions } : {}), ...(replyTo ? { participant: replyTo } : {}) }
+            : undefined,
         },
       },
     },
@@ -197,7 +199,9 @@ test("plugin: comando destructivo pide confirmacion y solo ejecuta con 'si'", as
 
   const ctx = makeCtx({
     phone: "grupo3@g.us",
-    text: "@bot elimina a 777",
+    text: "!ai elimina a 777",
+    command: "ai",
+    args: ["elimina", "a", "777"],
     sender: "111",
     mentions: [BOT_JID],
     admins: ["111@s.whatsapp.net"],
@@ -232,7 +236,7 @@ test("plugin: un tercero no puede confirmar una accion ajena", async () => {
   });
   const handler = router.handlers[0].handler;
 
-  await handler(makeCtx({ phone: "grupo4@g.us", text: "@bot elimina a 777", sender: "111", mentions: [BOT_JID], admins: ["111@s.whatsapp.net"] }));
+  await handler(makeCtx({ phone: "grupo4@g.us", text: "!ai elimina a 777", command: "ai", args: ["elimina", "a", "777"], sender: "111", mentions: [BOT_JID], admins: ["111@s.whatsapp.net"] }));
   // 222 no es admin ni el solicitante.
   const reply = await handler(makeCtx({ phone: "grupo4@g.us", text: "sí", sender: "222" }));
 
@@ -257,7 +261,7 @@ test("plugin: comando de usuario se ejecuta y envia su respuesta", async () => {
   });
   const handler = router.handlers[0].handler;
 
-  const ctx = makeCtx({ phone: "grupo5@g.us", text: "@bot haz ping", sender: "222", mentions: [BOT_JID] });
+  const ctx = makeCtx({ phone: "grupo5@g.us", text: "!ai haz ping", command: "ai", args: ["haz", "ping"], sender: "222", mentions: [BOT_JID] });
   const reply = await handler(ctx);
 
   assert.strictEqual(reply, HALT);
@@ -282,7 +286,7 @@ test("plugin: comando inexistente vuelve al modelo como error", async () => {
   });
   const handler = router.handlers[0].handler;
 
-  const reply = await handler(makeCtx({ phone: "grupo6@g.us", text: "@bot vuela", sender: "222", mentions: [BOT_JID] }));
+  const reply = await handler(makeCtx({ phone: "grupo6@g.us", text: "!ai vuela", command: "ai", args: ["vuela"], sender: "222", mentions: [BOT_JID] }));
 
   assert.strictEqual(reply, "Ese comando no existe.");
   assert.strictEqual(router.routes.length, 0);
@@ -304,13 +308,77 @@ test("plugin: no ejecuta nada si el mensaje sintetico vuelve al router", async (
   });
   const handler = router.handlers[0].handler;
 
-  const ctx = makeCtx({ phone: "grupo7@g.us", text: "@bot ping", sender: "222", mentions: [BOT_JID] });
+  const ctx = makeCtx({ phone: "grupo7@g.us", text: "!ai ping", command: "ai", args: ["ping"], sender: "222", mentions: [BOT_JID] });
   ctx.raw.__aiSynthetic = true;
 
   const reply = await handler(ctx);
 
   assert.strictEqual(reply, null);
   assert.strictEqual(client.calls.length, 0);
+});
+
+test("plugin: mencionar al bot sin comando ya no dispara la IA", async () => {
+  const router = fakeRouter(["ping"], () => "pong");
+  const ledger = fakeStore();
+  const client = scriptedClient([{ ok: true, text: "no deberia usarse" }]);
+
+  aiPlugin.register(router, {
+    client,
+    store: ledger,
+    ownerRepository,
+    ownerPolicy: creatorOnlyPolicy,
+    router,
+  });
+  const handler = router.handlers[0].handler;
+
+  const reply = await handler(makeCtx({ phone: "grupo8@g.us", text: "@bot hola", sender: "222", mentions: [BOT_JID] }));
+
+  assert.strictEqual(reply, null);
+  assert.strictEqual(client.calls.length, 0);
+});
+
+test("plugin: responder a un mensaje del bot ya no dispara la IA", async () => {
+  const router = fakeRouter(["ping"], () => "pong");
+  const ledger = fakeStore();
+  const client = scriptedClient([{ ok: true, text: "no deberia usarse" }]);
+
+  aiPlugin.register(router, {
+    client,
+    store: ledger,
+    ownerRepository,
+    ownerPolicy: creatorOnlyPolicy,
+    router,
+  });
+  const handler = router.handlers[0].handler;
+
+  const reply = await handler(
+    makeCtx({ phone: "grupo9@g.us", text: "hola", sender: "222", replyTo: BOT_JID }),
+  );
+
+  assert.strictEqual(reply, null);
+  assert.strictEqual(client.calls.length, 0);
+});
+
+test("plugin: !ia funciona igual que !ai", async () => {
+  const router = fakeRouter(["ping"], () => "pong");
+  const ledger = fakeStore();
+  const client = scriptedClient([{ ok: true, text: "hola!" }]);
+
+  aiPlugin.register(router, {
+    client,
+    store: ledger,
+    ownerRepository,
+    ownerPolicy: creatorOnlyPolicy,
+    router,
+  });
+  const handler = router.handlers[0].handler;
+
+  const reply = await handler(
+    makeCtx({ phone: "grupo10@g.us", text: "!ia hola", command: "ia", args: ["hola"], sender: "222" }),
+  );
+
+  assert.strictEqual(reply, "hola!");
+  assert.strictEqual(client.calls.length, 1);
 });
 
 test("router: commandBody conserva espacios y saltos de linea", async () => {
