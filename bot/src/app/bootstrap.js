@@ -33,6 +33,8 @@ import { toImagePlugin } from "../interfaces/commands/toimage/index.js";
 import { songPlugin } from "../interfaces/commands/song/index.js";
 import { minecraftPlugin } from "../interfaces/commands/minecraft/index.js";
 import { benchPlugin } from "../interfaces/commands/bench/index.js";
+import { getGroupSettingsStore } from "../infrastructure/storage/groupSettingsStore.js";
+import { GROUP_CONFIG_COMMANDS } from "../shared/config/modules.js";
 
 // From the bot working directory this resolves to the repository's bridge/auth.
 // Containers override it with AUTH_DIR=/app/bridge/auth.
@@ -62,6 +64,28 @@ const ownerPolicy = createOwnerPolicy({
   extraProtectedJids: () => ownerRepository.extraProtectedJids(),
 });
 console.log("[owner] BOT_LIDS configurado:", ownerRepository.botLids().length > 0);
+
+// Filtro por grupo: apagado total (!bot off) y módulos desactivados
+// (!modulo off economia). Los comandos de configuración siempre pasan para
+// poder volver a encenderlo.
+const groupSettings = getGroupSettingsStore();
+router.setGroupGate(async (ctx) => {
+  if (!ctx.isGroup) return null;
+  await groupSettings.ready();
+  const config = groupSettings.group(cleanJid(ctx.phone) || ctx.phone);
+  const isConfigCommand = ctx.isCommand && GROUP_CONFIG_COMMANDS.includes(ctx.command);
+  const disabled = config.botEnabled === false && !isConfigCommand;
+  const blocked = new Set(config.disabledModules || []);
+
+  return {
+    disabled,
+    allows: (plugin) => {
+      if (!plugin) return !disabled;
+      if (isConfigCommand) return plugin === "group_admin";
+      return !blocked.has(plugin);
+    },
+  };
+});
 
 function viewOnceMedia(message) {
   let current = message;

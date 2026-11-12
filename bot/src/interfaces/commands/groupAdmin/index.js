@@ -3,6 +3,8 @@ import { AntiNsfwStore } from "../../../infrastructure/storage/antiNsfwStore.js"
 import { MSG } from "../../../shared/messages.js";
 import { cleanJid, jidFromNumber, jidUser, participantIds, isAdminParticipant, findParticipant, resolvePhoneJid } from "../../../shared/utils/jid.js";
 import { renderWelcomeTemplate, WELCOME_VARS_HELP } from "../../../shared/utils/welcomeTemplate.js";
+import { getGroupSettingsStore } from "../../../infrastructure/storage/groupSettingsStore.js";
+import { GROUP_MODULES, resolveModule } from "../../../shared/config/modules.js";
 import { existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -176,6 +178,7 @@ function makeHandler(options) {
     const adminCommands = new Set([
       "close", "tagall", "hidetag", "kick", "kirk", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
       "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
+      "bot", "modulo", "modulos",
     ]);
     if (!adminCommands.has(ctx.command)) return null;
 
@@ -274,6 +277,58 @@ function makeHandler(options) {
       store.save();
       return `🔗 Antilink ${group.antilink ? "activado ✅" : "desactivado ❌"}.`;
     }
+    if (ctx.command === "bot") {
+      const action = String(ctx.args?.[0] || "").toLowerCase();
+      const settings = getGroupSettingsStore();
+      await settings.ready();
+      const config = settings.group(ctx.phone);
+      if (action !== "on" && action !== "off") {
+        return [
+          `Uso: ${ctx.prefix}bot on|off`,
+          `Estado actual: ${config.botEnabled ? "encendido ✅" : "apagado 🔇"}`,
+        ].join("\n");
+      }
+      config.botEnabled = action === "on";
+      await settings.save();
+      return config.botEnabled
+        ? "✅ Bot encendido en este grupo."
+        : "🔇 Bot apagado en este grupo. No responderá a nada (solo un admin puede reactivarlo con !bot on).";
+    }
+
+    if (ctx.command === "modulos") {
+      const settings = getGroupSettingsStore();
+      await settings.ready();
+      const config = settings.group(ctx.phone);
+      const lines = GROUP_MODULES.map(
+        (module) => `${config.disabledModules.includes(module.plugin) ? "❌" : "✅"} \`${module.key}\` — ${module.label}`,
+      );
+      return [
+        "⚙️ *Módulos en este grupo*",
+        ...lines,
+        "",
+        `Usa ${ctx.prefix}modulo on|off <modulo>`,
+      ].join("\n");
+    }
+
+    if (ctx.command === "modulo") {
+      const action = String(ctx.args?.[0] || "").toLowerCase();
+      const target = resolveModule((ctx.args || []).slice(1).join(" "));
+      if ((action !== "on" && action !== "off") || !target) {
+        return `Uso: ${ctx.prefix}modulo on|off <modulo>\nMira la lista con ${ctx.prefix}modulos`;
+      }
+      const settings = getGroupSettingsStore();
+      await settings.ready();
+      const config = settings.group(ctx.phone);
+      const disabled = new Set(config.disabledModules);
+      if (action === "off") disabled.add(target.plugin);
+      else disabled.delete(target.plugin);
+      config.disabledModules = [...disabled];
+      await settings.save();
+      return action === "off"
+        ? `❌ Módulo *${target.label}* desactivado en este grupo.`
+        : `✅ Módulo *${target.label}* activado en este grupo.`;
+    }
+
     if (ctx.command === "welcome") {
       group.welcome = ctx.args?.[0] === "on";
       store.save();
@@ -340,6 +395,10 @@ function makeHandler(options) {
 export async function handleGroupParticipantsUpdate(update, services = {}, options = {}) {
   const { store } = getStore(options);
   await store.ready();
+  // Si el bot está apagado en el grupo tampoco manda bienvenidas/despedidas.
+  const settings = getGroupSettingsStore();
+  await settings.ready();
+  if (settings.group(cleanJid(update.id)).botEnabled === false) return;
   const group = store.group(cleanJid(update.id));
   if (!group.welcome) return;
 
@@ -379,6 +438,7 @@ export const groupAdminPlugin = {
         // `kick`. Sigue funcionando y manda la foto, pero no se anuncia.
         "close", "tagall", "hidetag", "kick", "kirkrandom", "add", "promote", "demote", "link", "resetlink",
         "mutechat", "unmutechat", "antilink", "welcome", "setwelcome", "setbye", "warn", "warnings", "clearwarns",
+        "bot", "modulo", "modulos",
       ],
     });
   },

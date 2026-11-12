@@ -75,6 +75,13 @@
 - Comandos destructivos piden confirmación (`sí`/`no`, TTL `AI_COMMAND_CONFIRM_MS`, default 90 s). Confirma el mismo remitente o un admin/creador que mencione al bot. Al construir el mensaje sintético se quita al bot de `mentionedJid` para que `targetJid` no lo elija como objetivo.
 - `buscar_persona` usa `AiStore.recentMessages` (nombre + JID); si hay ambigüedad el modelo pregunta.
 
+## Control por grupo (apagado y módulos)
+- `group_settings` (`GroupSettingsStore`, singleton `getGroupSettingsStore()`): por grupo `{ botEnabled, disabledModules[] }`.
+- `!bot on|off` (admin) apaga el bot **entero** en ese grupo: no responde a nada, ni comandos ni IA, y tampoco manda bienvenidas/despedidas.
+- `!modulo on|off <modulo>` (admin) desactiva plugins concretos: `economia`, `casino`, `niveles`, `stickers`, `tiktok`, `ia`, `moderacion`, `antinsfw`, `encuestas`, `musica`, `imagen`, `minecraft`, `utilidades`, `ayuda`, `administracion`. `!modulos` lista el estado. Acepta clave, nombre de plugin o etiqueta (`economia`/`economy`/`Economía`).
+- `Router.setGroupGate(fn)` se inyecta en `bootstrap.js`: `null` = sin restricciones, `{ disabled }` = apagado total, `{ allows(plugin) }` filtra handlers por `meta.plugin`. `GROUP_CONFIG_COMMANDS` (`!bot`, `!modulo`, `!modulos`) siempre pasan para poder reactivar aunque el bot esté apagado.
+
+
 ## Console logs
 - `[cmd] <command> (<n> args) — <phone> (<sender>) en grupo "<name>" (<id>)`
 - `[anti_nsfw] <group>: <mediaType> → <provider> score=<s> nsfw=<b>`

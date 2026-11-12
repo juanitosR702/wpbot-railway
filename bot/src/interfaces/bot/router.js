@@ -26,8 +26,7 @@ export class Router {
     }
   }
 
-  registerPlugin(plugin, options = {}) {
-    if (!plugin?.name || typeof plugin.register !== "function") {
+  registerPlugin(plugin, options = {}) {    if (!plugin?.name || typeof plugin.register !== "function") {
       throw new Error("[router] Plugin invalido: debe exponer name y register(api)");
     }
 
@@ -41,6 +40,15 @@ export class Router {
     plugin.register(api, options);
     this._plugins.push({ name: plugin.name, version: plugin.version || "0.0.0" });
     console.log(`[router] Plugin registrado: ${plugin.name}`);
+  }
+
+  // Filtro opcional por grupo. Se llama una vez por mensaje y devuelve:
+  //   null                       -> sin restricciones
+  //   { disabled: true }         -> el bot está apagado en ese grupo
+  //   { allows(plugin) }         -> qué plugins pueden responder
+  // Se inyecta desde `bootstrap.js` para no acoplar el router a Mongo.
+  setGroupGate(gate) {
+    this._groupGate = typeof gate === "function" ? gate : null;
   }
 
   async route(msg, services = {}) {
@@ -105,7 +113,19 @@ export class Router {
       console.log(`[cmd] ${context.command} (${context.args.length} args) — ${phoneNum} (${context.sender})${groupInfo}`);
     }
 
+    let gate = null;
+    if (this._groupGate) {
+      try {
+        gate = await this._groupGate(context);
+      } catch (err) {
+        console.error("[router] Error en el filtro de grupo:", err);
+        gate = null;
+      }
+    }
+    if (gate?.disabled) return null;
+
     for (const { handler, meta } of this._handlers) {
+      if (gate && typeof gate.allows === "function" && !gate.allows(meta?.plugin)) continue;
       try {
         const reply = await handler(context);
         if (reply?.__routerHalt === true) return null;
