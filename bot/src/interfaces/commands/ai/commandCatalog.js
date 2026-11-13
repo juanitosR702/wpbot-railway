@@ -30,7 +30,7 @@ const INFO = {
   help: { desc: "Menú con todos los comandos disponibles", level: U, keywords: ["ayuda", "menu", "comandos"] },
 
   // ---- IA ----
-  ai: { desc: "Pregunta libre a la IA", usage: "!ai <pregunta>", level: U, keywords: ["pregunta", "ia"] },
+  ai: { desc: "Pregunta libre a la IA (también puedes mencionar al bot con @)", usage: "!ai <pregunta>", level: U, keywords: ["pregunta", "ia"] },
   ia: { desc: "Alias de !ai", usage: "!ia <pregunta>", level: U, keywords: ["pregunta", "ia"] },
   ask: { desc: "Alias de !ai", usage: "!ask <pregunta>", level: U, keywords: ["pregunta", "ia"] },
   resume: { desc: "Resume las últimas 24h del chat", level: U, keywords: ["resumen", "resume"] },

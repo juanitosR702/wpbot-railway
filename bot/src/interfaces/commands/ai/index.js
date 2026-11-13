@@ -54,7 +54,35 @@ function botIds(ctx, ownerRepository) {
 
 function mentionsBot(ctx, ownerRepository) {
   const ids = botIds(ctx, ownerRepository);
-  return mentionedJids(ctx).some((mentioned) => ids.some((id) => sameParticipant(mentioned, id)));
+  const mentioned = mentionedJids(ctx).some((mentionedJid) =>
+    ids.some((id) => sameParticipant(mentionedJid, id)),
+  );
+  if (!mentioned) return false;
+
+  // Si es una respuesta a un mensaje del bot, algunos clientes meten al autor
+  // citado en `mentionedJid`. En ese caso solo activamos si la mencion esta
+  // escrita con @ en el texto; una simple respuesta no basta.
+  const quoted = contextInfoOf(ctx)?.participant;
+  const replyingToBot = Boolean(quoted) && ids.some((id) => sameParticipant(quoted, id));
+  if (!replyingToBot) return true;
+
+  const text = String(ctx.text || "");
+  return ids.some((id) => {
+    const user = jidUser(id);
+    return Boolean(user) && text.includes(`@${user}`);
+  });
+}
+
+// Texto de un mensaje que menciona al bot, sin la mencion. WhatsApp escribe la
+// mencion como "@<numero>"; quitamos solo las del bot para que el resto del
+// texto quede intacto. Responder a un mensaje del bot NO entra por aqui: eso
+// no activa la IA (solo las menciones reales).
+function promptFromMention(ctx, ownerRepository) {
+  const ids = new Set(botIds(ctx, ownerRepository).map((id) => jidUser(id)).filter(Boolean));
+  return String(ctx.text || "")
+    .replace(/@(\d{5,})/g, (match, digits) => (ids.has(digits) ? " " : match))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function promptFrom(ctx) {
@@ -93,7 +121,7 @@ function usage(ctx) {
     `${ctx.prefix}aireset — borrar el historial`,
     `${ctx.prefix}aistatus — ver el estado del módulo`,
     "",
-    "Solo respondo al comando. Mencionarme o responder a un mensaje mío ya no me activa.",
+    "Solo respondo al comando o si me mencionas con @. Responder a un mensaje mío no me activa.",
   ].join("\n");
 }
 
@@ -565,11 +593,12 @@ function makeHandler(options = {}) {
     const store = await resolveStore();
 
     const fromMe = Boolean(ctx.raw?.key?.fromMe);
-    // La IA solo responde al comando explicito (!ai / !ia / !ask). Mencionar al
-    // bot o responder a uno de sus mensajes ya NO la activa: eso solo alimenta
-    // el historial y las confirmaciones.
+    // La IA responde al comando explicito (!ai / !ia / !ask) y cuando la
+    // mencionan con @ en el texto. Responder a un mensaje del bot NO la activa:
+    // eso solo alimenta el historial y las confirmaciones.
     const isAiCommand = !fromMe && ctx.isCommand && COMMANDS.includes(ctx.command);
     const botMentioned = !fromMe && mentionsBot(ctx, ownerRepository);
+    const isMention = !fromMe && !ctx.isCommand && botMentioned && Boolean(String(ctx.text || "").trim());
 
     if (ctx.text && !ctx.isCommand && !fromMe) {
       store.recordMessage(ctx.phone, {
@@ -592,7 +621,7 @@ function makeHandler(options = {}) {
       if (confirmed !== undefined) return confirmed;
     }
 
-    if (!isAiCommand) return null;
+    if (!isAiCommand && !isMention) return null;
 
     if (ctx.command === "aistatus") {
       const chat = store.chat(ctx.phone);
@@ -647,7 +676,9 @@ function makeHandler(options = {}) {
       return result.content;
     }
 
-    const prompt = trimPrompt(promptFrom(ctx), config.maxPromptChars);
+    const prompt = isMention
+      ? trimPrompt(promptFromMention(ctx, ownerRepository), config.maxPromptChars)
+      : trimPrompt(promptFrom(ctx), config.maxPromptChars);
     if (!prompt) return usage(ctx);
 
     if (isRateLimited(ctx, config.rateLimitMs)) {

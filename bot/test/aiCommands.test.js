@@ -317,10 +317,10 @@ test("plugin: no ejecuta nada si el mensaje sintetico vuelve al router", async (
   assert.strictEqual(client.calls.length, 0);
 });
 
-test("plugin: mencionar al bot sin comando ya no dispara la IA", async () => {
+test("plugin: mencionar al bot con @ dispara la IA", async () => {
   const router = fakeRouter(["ping"], () => "pong");
   const ledger = fakeStore();
-  const client = scriptedClient([{ ok: true, text: "no deberia usarse" }]);
+  const client = scriptedClient([{ ok: true, text: "hola!" }]);
 
   aiPlugin.register(router, {
     client,
@@ -331,13 +331,17 @@ test("plugin: mencionar al bot sin comando ya no dispara la IA", async () => {
   });
   const handler = router.handlers[0].handler;
 
-  const reply = await handler(makeCtx({ phone: "grupo8@g.us", text: "@bot hola", sender: "222", mentions: [BOT_JID] }));
+  const reply = await handler(
+    makeCtx({ phone: "grupo8@g.us", text: "@573000000000 hola", sender: "222", mentions: [BOT_JID] }),
+  );
 
-  assert.strictEqual(reply, null);
-  assert.strictEqual(client.calls.length, 0);
+  assert.strictEqual(reply, "hola!");
+  assert.strictEqual(client.calls.length, 1);
+  // La mencion se quita del texto que recibe el modelo.
+  assert.strictEqual(client.calls[0].turns.at(-1).text, "Tester: hola");
 });
 
-test("plugin: responder a un mensaje del bot ya no dispara la IA", async () => {
+test("plugin: responder al mensaje del bot no dispara la IA aunque la metadata lo mencione", async () => {
   const router = fakeRouter(["ping"], () => "pong");
   const ledger = fakeStore();
   const client = scriptedClient([{ ok: true, text: "no deberia usarse" }]);
@@ -352,11 +356,39 @@ test("plugin: responder a un mensaje del bot ya no dispara la IA", async () => {
   const handler = router.handlers[0].handler;
 
   const reply = await handler(
-    makeCtx({ phone: "grupo9@g.us", text: "hola", sender: "222", replyTo: BOT_JID }),
+    makeCtx({ phone: "grupo9@g.us", text: "hola", sender: "222", mentions: [BOT_JID], replyTo: BOT_JID }),
   );
 
   assert.strictEqual(reply, null);
   assert.strictEqual(client.calls.length, 0);
+});
+
+test("plugin: responder al bot pero escribiendo @ tambien dispara la IA", async () => {
+  const router = fakeRouter(["ping"], () => "pong");
+  const ledger = fakeStore();
+  const client = scriptedClient([{ ok: true, text: "te respondo" }]);
+
+  aiPlugin.register(router, {
+    client,
+    store: ledger,
+    ownerRepository,
+    ownerPolicy: creatorOnlyPolicy,
+    router,
+  });
+  const handler = router.handlers[0].handler;
+
+  const reply = await handler(
+    makeCtx({
+      phone: "grupo11@g.us",
+      text: "@573000000000 y esto?",
+      sender: "222",
+      mentions: [BOT_JID],
+      replyTo: BOT_JID,
+    }),
+  );
+
+  assert.strictEqual(reply, "te respondo");
+  assert.strictEqual(client.calls.length, 1);
 });
 
 test("plugin: !ia funciona igual que !ai", async () => {
