@@ -75,6 +75,7 @@
 - Comandos destructivos piden confirmación (`sí`/`no`, TTL `AI_COMMAND_CONFIRM_MS`, default 90 s). Confirma el mismo remitente o un admin/creador que mencione al bot. Al construir el mensaje sintético se quita al bot de `mentionedJid` para que `targetJid` no lo elija como objetivo.
 - `buscar_persona` usa `AiStore.recentMessages` (nombre + JID); si hay ambigüedad el modelo pregunta.
 - Si Google retira el modelo configurado o el nuevo está saturado (`503 UNAVAILABLE` / "high demand"), `geminiClient._generate` reintenta hasta 3 intentos: primero con el reemplazo que sugiere el propio error (`use models/...`), luego con la lista `FALLBACK_MODELS` (`gemini-3.5-flash`, `3.8`, `3.7`, `3.6`). El que funciona se recuerda en memoria (`config.model`) y queda el log `[ai] Modelo "<x>" no disponible (...); probando "<y>".`
+- Gemini 3 exige reenviar el `thoughtSignature` de cada `functionCall` en el siguiente turno. `chatWithTools` lo devuelve en `functionCall.thoughtSignature` y `toGeminiTurn` lo vuelve a poner en la part. Sin eso la API responde "Function call is missing a thought_signature in functionCall parts".
 
 ## Control por grupo (apagado y módulos)
 - `group_settings` (`GroupSettingsStore`, singleton `getGroupSettingsStore()`): por grupo `{ botEnabled, disabledModules[] }`.

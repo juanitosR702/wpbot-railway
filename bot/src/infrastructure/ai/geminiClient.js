@@ -141,7 +141,13 @@ export class GeminiClient {
     if (!result.ok) return result;
 
     const parts = result.data?.candidates?.[0]?.content?.parts || [];
-    const call = parts.find((part) => part?.functionCall)?.functionCall || null;
+    const callPart = parts.find((part) => part?.functionCall) || null;
+    const call = callPart?.functionCall || null;
+    // Gemini 3 exige devolver el `thoughtSignature` junto al functionCall en el
+    // siguiente turno; si se pierde, responde "Function call is missing a
+    // thought_signature in functionCall parts".
+    const thoughtSignature =
+      signatureOf(callPart) || parts.map(signatureOf).find(Boolean) || null;
     const text = parts
       .filter((part) => typeof part?.text === "string")
       .map((part) => part.text)
@@ -151,7 +157,14 @@ export class GeminiClient {
     return {
       ok: true,
       text,
-      functionCall: call ? { name: call.name, args: call.args || {} } : null,
+      functionCall: call
+        ? {
+            name: call.name,
+            args: call.args || {},
+            id: call.id || null,
+            thoughtSignature,
+          }
+        : null,
       usage: result.data?.usageMetadata || null,
       model: this.config.model,
     };
@@ -220,6 +233,10 @@ function toGeminiSchema(schema) {
   return result;
 }
 
+function signatureOf(part) {
+  return part?.thoughtSignature || part?.thought_signature || null;
+}
+
 function toGeminiTurn(turn) {
   if (turn.functionResponse) {
     return {
@@ -228,6 +245,7 @@ function toGeminiTurn(turn) {
         functionResponse: {
           name: turn.functionResponse.name,
           response: turn.functionResponse.response ?? {},
+          ...(turn.functionResponse.id ? { id: turn.functionResponse.id } : {}),
         },
       }],
     };
@@ -240,7 +258,12 @@ function toGeminiTurn(turn) {
         functionCall: {
           name: turn.functionCall.name,
           args: turn.functionCall.args ?? {},
+          ...(turn.functionCall.id ? { id: turn.functionCall.id } : {}),
         },
+        // Obligatorio en Gemini 3: se devuelve la firma tal cual vino.
+        ...(turn.functionCall.thoughtSignature
+          ? { thoughtSignature: turn.functionCall.thoughtSignature }
+          : {}),
       }],
     };
   }

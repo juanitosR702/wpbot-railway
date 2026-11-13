@@ -485,7 +485,7 @@ async function runWithTools({ ctx, prompt, history, config, client, catalog, run
 
     const name = result.functionCall.name;
     const args = result.functionCall.args || {};
-    const callId = result.functionCall.id || `call_${round}`;
+    const callId = result.functionCall.id || null;
 
     const output = await executor.execute(name, args);
 
@@ -495,7 +495,16 @@ async function runWithTools({ ctx, prompt, history, config, client, catalog, run
 
     if (output.executed) executed = true;
 
-    turns.push({ role: "model", functionCall: { id: callId, name, args } });
+    // Gemini 3 exige devolver la firma del pensamiento junto al functionCall.
+    turns.push({
+      role: "model",
+      functionCall: {
+        name,
+        args,
+        id: callId,
+        thoughtSignature: result.functionCall.thoughtSignature || null,
+      },
+    });
     turns.push({ role: "user", functionResponse: { id: callId, name, response: output.response } });
   }
 
