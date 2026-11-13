@@ -22,9 +22,16 @@ const DEFAULTS = {
   provider: "gemini",
   openaiApiKey: "",
   openaiBaseUrl: "https://integrate.api.nvidia.com/v1",
-  openaiModel: "meta/llama-3.1-70b-instruct",
+  openaiModel: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
   openaiTemperature: 0.7,
   openaiMaxTokens: 700,
+  // Cadena de respaldo: Gemini -> OpenRouter -> NVIDIA. `openrouter/auto`
+  // deja que OpenRouter elija un modelo disponible de su catalogo.
+  openrouterBaseUrl: "https://openrouter.ai/api/v1",
+  openrouterModel: "openrouter/auto",
+  nvidiaBaseUrl: "https://integrate.api.nvidia.com/v1",
+  nvidiaModel: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  fallbackTimeoutMs: 60000,
 };
 
 export function getAiConfig() {
@@ -47,5 +54,13 @@ export function getAiConfig() {
     openaiModel: env("OPENAI_MODEL", DEFAULTS.openaiModel),
     openaiTemperature: envNumber("OPENAI_TEMPERATURE", DEFAULTS.openaiTemperature),
     openaiMaxTokens: envNumber("OPENAI_MAX_TOKENS", DEFAULTS.openaiMaxTokens),
+    openrouterApiKey: env("OPENROUTER_API_KEY"),
+    openrouterBaseUrl: env("OPENROUTER_BASE_URL", DEFAULTS.openrouterBaseUrl),
+    openrouterModel: env("OPENROUTER_MODEL", DEFAULTS.openrouterModel),
+    // Reutiliza la clave de NVIDIA del modulo NSFW si no hay una dedicada.
+    nvidiaApiKey: env("NVIDIA_API_KEY") || env("NSFW_NVIDIA_API_KEY"),
+    nvidiaBaseUrl: env("NVIDIA_BASE_URL", DEFAULTS.nvidiaBaseUrl),
+    nvidiaModel: env("NVIDIA_MODEL", DEFAULTS.nvidiaModel),
+    fallbackTimeoutMs: envNumber("AI_FALLBACK_TIMEOUT_MS", DEFAULTS.fallbackTimeoutMs),
   };
 }

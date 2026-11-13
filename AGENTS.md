@@ -66,6 +66,7 @@
 - `NSFW_PROVIDER` (default `disabled`), `NSFW_THRESHOLD`, `NSFW_TIMEOUT_MS`, `NSFW_MAX_BYTES`, `NSFW_KICK_THRESHOLD`
 - `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.5-flash`; AI y provider NSFW gemini); `OPENROUTER_API_KEY`, `OPENAI_API_KEY`; `SIGHTENGINE_API_USER/SECRET`, `NUDENET_URL`, `NSFW_CUSTOM_URL`
 - `AI_PROVIDER` (`gemini`/`openai`), `AI_SYSTEM_PROMPT` (sobrescribe el prompt por defecto), `AI_COMMAND_CONFIRM_MS` (TTL de confirmación, default 90000)
+- Cadena de respaldo de la IA: `OPENROUTER_API_KEY` + `OPENROUTER_MODEL` (default `openrouter/auto`) y `NVIDIA_API_KEY` (si falta se reutiliza `NSFW_NVIDIA_API_KEY`) + `NVIDIA_MODEL` (default `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`). `AI_FALLBACK_TIMEOUT_MS` (default 60000) es el timeout de los tramos OpenAI-compatibles
 - `YTDLP_PATH` (default `yt-dlp`), `YTDLP_COOKIES`
 
 ## IA con ejecución de comandos
@@ -76,6 +77,8 @@
 - `buscar_persona` usa `AiStore.recentMessages` (nombre + JID); si hay ambigüedad el modelo pregunta.
 - Si Google retira el modelo configurado, lo satura (`503 UNAVAILABLE` / "high demand") o agota su cuota diaria (`429 RESOURCE_EXHAUSTED`, la cuota gratuita es **por modelo**), `geminiClient._generate` prueba hasta 3 modelos: el reemplazo que sugiere el propio error (`use models/...`), el configurado y la lista `FALLBACK_MODELS` (`gemini-3.5-flash`, `gemini-3.1-flash-lite`, `3.8`, `3.7`, `3.6`). Un modelo retirado queda inválido en memoria (se adopta el sugerido como principal); uno sin cuota queda en cuarentena hasta el `Please retry in ...` que informa la API (1h por defecto). El principal no cambia por un 503 puntual: el respaldo es solo para esa petición. Logs `[ai] Cuota agotada para "<x>"; probando otro modelo.` / `[ai] Modelo "<x>" no disponible (...)`. `chat()/chatWithTools()` devuelven el modelo realmente usado en `result.model`.
 - Gemini 3 exige reenviar el `thoughtSignature` de cada `functionCall` en el siguiente turno. `chatWithTools` lo devuelve en `functionCall.thoughtSignature` y `toGeminiTurn` lo vuelve a poner en la part. Sin eso la API responde "Function call is missing a thought_signature in functionCall parts".
+- **Cadena de proveedores** (`createAiClient.js` + `fallbackClient.js`): Gemini (principal) → OpenRouter → NVIDIA. Los tramos sin clave se omiten, así que con solo `GEMINI_API_KEY` nada cambia; `AI_PROVIDER=openai` conserva el cliente único antiguo. `FallbackClient` prueba en orden cuando un proveedor falla por cuota/clave/saturación/red, devuelve `provider` + `model` reales y pone en cuarentena 10 min al que falla por `401/402/403/429` o mensaje de cuota/clave (`[ai] Proveedor "<x>" fallo (...); probando el siguiente.`). `chatWithTools` solo considera tramos con `supportsTools`; si todos fallan con `unsupported`, el plugin reintenta con `chat()` simple. `!aistatus` lista la cadena con ✅/❌/⏳.
+- NVIDIA verificado con function calling (2 rondas) en `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` (~2 s) y `meta/llama-3.2-90b-vision-instruct` (~66 s, solo como alternativa manual). Los modelos `llama-3.1-70b`, `nemotron-super`, `kimi-k2.6`, `mistral-large-2` devuelven 404/410 con la clave actual.
 
 ## Control por grupo (apagado y módulos)
 - `group_settings` (`GroupSettingsStore`, singleton `getGroupSettingsStore()`): por grupo `{ botEnabled, disabledModules[] }`.

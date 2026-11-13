@@ -569,13 +569,8 @@ function makeHandler(options = {}) {
   let clientInstance = options.client || null;
   async function resolveClient() {
     if (clientInstance) return clientInstance;
-    if (config.provider === "openai") {
-      const { OpenaiClient } = await import("../../../infrastructure/ai/openaiClient.js");
-      clientInstance = new OpenaiClient(config);
-    } else {
-      const { GeminiClient } = await import("../../../infrastructure/ai/geminiClient.js");
-      clientInstance = new GeminiClient(config);
-    }
+    const { createAiClient } = await import("../../../infrastructure/ai/createAiClient.js");
+    clientInstance = await createAiClient(config);
     return clientInstance;
   }
 
@@ -635,16 +630,25 @@ function makeHandler(options = {}) {
     if (ctx.command === "aistatus") {
       const chat = store.chat(ctx.phone);
       const client = await resolveClient();
-      const isOpenai = config.provider === "openai";
-      const hasKey = isOpenai ? Boolean(config.openaiApiKey) : Boolean(config.apiKey);
+      const chain = typeof client.describe === "function"
+        ? client.describe()
+        : [{
+            name: config.provider === "openai" ? "openai" : "gemini",
+            model: config.provider === "openai" ? config.openaiModel : config.model,
+            configured: config.provider === "openai" ? Boolean(config.openaiApiKey) : Boolean(config.apiKey),
+            tools: Boolean(client.supportsTools),
+            cooling: false,
+          }];
       const catalogSize = catalog ? catalog.size() : 0;
       return [
         "🤖 *Estado de la IA*",
-        `Proveedor: ${isOpenai ? "OpenAI (NVIDIA)" : "Gemini"}`,
-        `Modelo: ${isOpenai ? config.openaiModel : config.model}`,
-        `API key: ${hasKey ? "✅ configurada" : "❌ faltante"}`,
-        `Comandos conocidos: ${catalogSize}`,
+        ...chain.map((p) => {
+          if (!p.configured) return `- ${p.name}: ❌ sin clave`;
+          const state = p.cooling ? "⏳ en espera (cuota/clave)" : "✅";
+          return `- ${p.name}: ${p.model || "modelo por defecto"} ${state}`;
+        }),
         `Herramientas: ${client.supportsTools ? "✅" : "❌"}`,
+        `Comandos conocidos: ${catalogSize}`,
         `Historial: ${chat.history.length}/${config.maxHistoryMessages} mensajes`,
         `Almacenados: ${chat.messages.length}/${config.maxStoredMessages}`,
       ].join("\n");

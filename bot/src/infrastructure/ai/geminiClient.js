@@ -109,7 +109,11 @@ export class GeminiClient {
         this._invalidModels.add(model);
         console.warn(`[ai] El modelo "${model}" ya no esta disponible; usando "${suggested}".`);
         if (model === this.config.model) this.config.model = suggested;
-        if (!queue.includes(suggested)) queue.unshift(suggested);
+        // Se adelanta el sugerido (aunque ya este en la lista de respaldo)
+        // para no gastar intentos en modelos peores.
+        const suggestedIndex = queue.indexOf(suggested);
+        if (suggestedIndex !== -1) queue.splice(suggestedIndex, 1);
+        queue.unshift(suggested);
         continue;
       }
 
