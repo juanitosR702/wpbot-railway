@@ -2,22 +2,53 @@ export class GeminiClient {
   constructor(config) {
     this.config = config;
     this.supportsTools = true;
+    // Modelos retirados por Google (definitivo) y modelos con cuota diaria
+    // agotada (temporal, con la hora de reintento que informa la API).
+    this._invalidModels = new Set();
+    this._cooldownUntil = new Map();
   }
 
   isConfigured() {
     return Boolean(this.config.apiKey);
   }
 
+  _isCooling(model) {
+    const until = this._cooldownUntil.get(model) || 0;
+    if (until > Date.now()) return true;
+    this._cooldownUntil.delete(model);
+    return false;
+  }
+
+  _cool(model, data) {
+    const ms = retryAfterMs(data) ?? 60 * 60 * 1000;
+    this._cooldownUntil.set(model, Date.now() + ms);
+  }
+
+  _nextCooldownMs() {
+    const now = Date.now();
+    let next = 0;
+    for (const until of this._cooldownUntil.values()) {
+      if (until > now && (!next || until - now < next)) next = until - now;
+    }
+    return next;
+  }
+
   /**
-   * POST a `:generateContent`. Google retira modelos y a veces los nuevos
-   * están saturados (503 "high demand"), así que si el modelo configurado
-   * falla se prueba el que sugiere el propio error o uno de la lista de
-   * respaldo. El que funcione se recuerda en memoria (`config.model`).
+   * POST a `:generateContent`. Google retira modelos, a veces los nuevos estan
+   * saturados (503 "high demand") y la cuota gratuita es por modelo y por dia
+   * (429 RESOURCE_EXHAUSTED). Se prueba el modelo configurado y, si no puede,
+   * el que sugiere el error o uno de la lista de respaldo.
    */
   async _generate(body) {
     const deadline = Date.now() + this.config.timeoutMs;
     const tried = new Set();
-    let model = this.config.model;
+
+    const queue = [];
+    const addCandidate = (model) => {
+      if (model && !queue.includes(model) && !tried.has(model)) queue.push(model);
+    };
+    addCandidate(this.config.model);
+    FALLBACK_MODELS.forEach(addCandidate);
 
     const attempt = async (target) => {
       const remaining = deadline - Date.now();
@@ -44,8 +75,16 @@ export class GeminiClient {
       }
     };
 
-    for (let i = 0; i < MAX_ATTEMPTS && model && !tried.has(model); i++) {
+    let lastError = null;
+    let attempts = 0;
+
+    while (queue.length && attempts < MAX_ATTEMPTS) {
+      const model = queue.shift();
+      if (!model || tried.has(model) || this._invalidModels.has(model)) continue;
+      if (this._isCooling(model)) continue;
+
       tried.add(model);
+      attempts++;
 
       let result;
       try {
@@ -57,29 +96,48 @@ export class GeminiClient {
       if (result.timedOut) return { ok: false, error: "Timeout consultando Gemini." };
 
       const { response, data } = result;
-      if (response.ok) {
-        if (model !== this.config.model) {
-          console.warn(`[ai] El modelo "${this.config.model}" no respondio; usando "${model}".`);
-          this.config.model = model;
-        }
-        return { ok: true, data };
+      if (response.ok) return { ok: true, data, model };
+
+      lastError = {
+        ok: false,
+        status: response.status,
+        error: data?.error?.message || data?.message || `Gemini respondio HTTP ${response.status}`,
+      };
+
+      const suggested = suggestedModel(data);
+      if (suggested && suggested !== model) {
+        this._invalidModels.add(model);
+        console.warn(`[ai] El modelo "${model}" ya no esta disponible; usando "${suggested}".`);
+        if (model === this.config.model) this.config.model = suggested;
+        if (!queue.includes(suggested)) queue.unshift(suggested);
+        continue;
       }
 
-      const next = nextModel(model, data, tried);
-      if (!next) {
-        return {
-          ok: false,
-          status: response.status,
-          error: data?.error?.message || data?.message || `Gemini respondio HTTP ${response.status}`,
-        };
+      if (isQuotaExhausted(data)) {
+        this._cool(model, data);
+        console.warn(`[ai] Cuota agotada para "${model}"; probando otro modelo.`);
+        continue;
       }
-      console.warn(
-        `[ai] Modelo "${model}" no disponible (${data?.error?.status || response.status}); probando "${next}".`,
-      );
-      model = next;
+
+      if (isUnavailable(data)) {
+        console.warn(
+          `[ai] Modelo "${model}" no disponible (${data?.error?.status || response.status}); probando otro.`,
+        );
+        continue;
+      }
+
+      break;
     }
 
-    return { ok: false, error: `Ningun modelo de Gemini respondio (probados: ${[...tried].join(", ")}).` };
+    if (lastError) return lastError;
+
+    const waitMs = this._nextCooldownMs();
+    return {
+      ok: false,
+      error: waitMs
+        ? `Cuota gratuita de Gemini agotada; reintenta en ~${Math.ceil(waitMs / 60000)} min.`
+        : "Ningun modelo de Gemini respondio.",
+    };
   }
 
   async chat(messages) {
@@ -114,7 +172,7 @@ export class GeminiClient {
       ok: true,
       content,
       usage: result.data?.usageMetadata || null,
-      model: this.config.model,
+      model: result.model || this.config.model,
     };
   }
 
@@ -166,29 +224,22 @@ export class GeminiClient {
           }
         : null,
       usage: result.data?.usageMetadata || null,
-      model: this.config.model,
+      model: result.model || this.config.model,
     };
   }
 }
 
 // Orden de respaldo si el modelo configurado no responde (3.5 es el mas
-// estable hoy; los 3.6+ suelen dar 503 "high demand" al lanzarse).
+// estable hoy; los 3.6+ suelen dar 503 "high demand" al lanzarse y la cuota
+// gratuita es por modelo, asi que el lite sirve de segunda opcion).
 const FALLBACK_MODELS = [
   "gemini-3.5-flash",
+  "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
 ];
 const MAX_ATTEMPTS = 3;
-
-// Siguiente modelo a probar: el que sugiere Google si retiro el actual, o uno
-// de la lista de respaldo si esta saturado. null = no reintentar.
-function nextModel(current, data, tried) {
-  const suggested = suggestedModel(data);
-  if (suggested && suggested !== current && !tried.has(suggested)) return suggested;
-  if (isUnavailable(data)) return FALLBACK_MODELS.find((model) => !tried.has(model)) || null;
-  return null;
-}
 
 // 503 / "high demand" / "overloaded" son transitorios y valen otro modelo.
 function isUnavailable(data) {
@@ -198,6 +249,30 @@ function isUnavailable(data) {
     status === "UNAVAILABLE" ||
     /high demand|overloaded|temporarily unavailable|try again later|no longer available/i.test(message)
   );
+}
+
+// Cuota diaria agotada. La cuota gratuita de Gemini es POR MODELO, asi que
+// cambiar de modelo (3.5 -> 3.1 lite -> ...) suele devolver el servicio.
+function isQuotaExhausted(data) {
+  const status = String(data?.error?.status || "");
+  const message = String(data?.error?.message || "");
+  return (
+    status === "RESOURCE_EXHAUSTED" ||
+    /exceeded your current quota|quota exceeded|rate limit|rate.?limits|per day limit/i.test(message)
+  );
+}
+
+// La API dice "Please retry in 13h28m39.5s". Lo usamos para no volver a
+// intentar ese modelo hasta que se renueve la cuota.
+function retryAfterMs(data) {
+  const message = String(data?.error?.message || "");
+  const match = message.match(/retry in\s+(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i);
+  if (!match) return null;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  const ms = ((hours * 60 + minutes) * 60 + seconds) * 1000;
+  return ms > 0 ? ms : null;
 }
 
 // Extrae el modelo que Google sugiere cuando retira el actual. Si el error no
