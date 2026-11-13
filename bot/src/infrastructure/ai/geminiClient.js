@@ -9,17 +9,24 @@ export class GeminiClient {
   }
 
   /**
-   * POST a `:generateContent`. Si Google retira el modelo configurado, su
-   * error trae el nombre del reemplazo ("use models/gemini-3.8-flash"); en ese
-   * caso reintenta una vez con ese modelo y lo recuerda en memoria.
+   * POST a `:generateContent`. Google retira modelos y a veces los nuevos
+   * están saturados (503 "high demand"), así que si el modelo configurado
+   * falla se prueba el que sugiere el propio error o uno de la lista de
+   * respaldo. El que funcione se recuerda en memoria (`config.model`).
    */
   async _generate(body) {
-    const attempt = async (model) => {
+    const deadline = Date.now() + this.config.timeoutMs;
+    const tried = new Set();
+    let model = this.config.model;
+
+    const attempt = async (target) => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return { timedOut: true };
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
+      const timer = setTimeout(() => controller.abort(), remaining);
       try {
         const base = this.config.apiUrl.replace(/\/$/, "");
-        const url = `${base}/models/${encodeURIComponent(model)}:generateContent`;
+        const url = `${base}/models/${encodeURIComponent(target)}:generateContent`;
         const response = await fetch(url, {
           method: "POST",
           signal: controller.signal,
@@ -37,32 +44,42 @@ export class GeminiClient {
       }
     };
 
-    try {
-      let result = await attempt(this.config.model);
-      if (!result.response.ok) {
-        const suggested = suggestedModel(result.data);
-        if (suggested && suggested !== this.config.model) {
-          console.warn(
-            `[ai] El modelo "${this.config.model}" no esta disponible; reintentando con "${suggested}".`,
-          );
-          this.config.model = suggested;
-          result = await attempt(suggested);
-        }
+    for (let i = 0; i < MAX_ATTEMPTS && model && !tried.has(model); i++) {
+      tried.add(model);
+
+      let result;
+      try {
+        result = await attempt(model);
+      } catch (err) {
+        const error = err?.name === "AbortError" ? "Timeout consultando Gemini." : err?.message || "Error consultando Gemini.";
+        return { ok: false, error };
       }
+      if (result.timedOut) return { ok: false, error: "Timeout consultando Gemini." };
 
       const { response, data } = result;
-      if (!response.ok) {
+      if (response.ok) {
+        if (model !== this.config.model) {
+          console.warn(`[ai] El modelo "${this.config.model}" no respondio; usando "${model}".`);
+          this.config.model = model;
+        }
+        return { ok: true, data };
+      }
+
+      const next = nextModel(model, data, tried);
+      if (!next) {
         return {
           ok: false,
           status: response.status,
           error: data?.error?.message || data?.message || `Gemini respondio HTTP ${response.status}`,
         };
       }
-      return { ok: true, data };
-    } catch (err) {
-      const error = err?.name === "AbortError" ? "Timeout consultando Gemini." : err?.message || "Error consultando Gemini.";
-      return { ok: false, error };
+      console.warn(
+        `[ai] Modelo "${model}" no disponible (${data?.error?.status || response.status}); probando "${next}".`,
+      );
+      model = next;
     }
+
+    return { ok: false, error: `Ningun modelo de Gemini respondio (probados: ${[...tried].join(", ")}).` };
   }
 
   async chat(messages) {
@@ -141,8 +158,37 @@ export class GeminiClient {
   }
 }
 
+// Orden de respaldo si el modelo configurado no responde (3.5 es el mas
+// estable hoy; los 3.6+ suelen dar 503 "high demand" al lanzarse).
+const FALLBACK_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+];
+const MAX_ATTEMPTS = 3;
+
+// Siguiente modelo a probar: el que sugiere Google si retiro el actual, o uno
+// de la lista de respaldo si esta saturado. null = no reintentar.
+function nextModel(current, data, tried) {
+  const suggested = suggestedModel(data);
+  if (suggested && suggested !== current && !tried.has(suggested)) return suggested;
+  if (isUnavailable(data)) return FALLBACK_MODELS.find((model) => !tried.has(model)) || null;
+  return null;
+}
+
+// 503 / "high demand" / "overloaded" son transitorios y valen otro modelo.
+function isUnavailable(data) {
+  const status = String(data?.error?.status || "");
+  const message = String(data?.error?.message || "");
+  return (
+    status === "UNAVAILABLE" ||
+    /high demand|overloaded|temporarily unavailable|try again later|no longer available/i.test(message)
+  );
+}
+
 // Extrae el modelo que Google sugiere cuando retira el actual. Si el error no
-// trae una alternativa, devuelve null y no se reintenta.
+// trae una alternativa, devuelve null y no se reintenta por esa via.
 function suggestedModel(data) {
   const message = String(data?.error?.message || data?.message || "");
   const match =

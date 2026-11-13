@@ -2,7 +2,7 @@ import { env, envNumber } from "../../shared/config/env.js";
 
 const DEFAULTS = {
   apiUrl: "https://generativelanguage.googleapis.com/v1beta",
-  model: "gemini-3.8-flash",
+  model: "gemini-3.5-flash",
   temperature: 0.4,
   maxTokens: 700,
   timeoutMs: 20000,

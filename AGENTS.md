@@ -64,7 +64,7 @@
 - `MONGODB_URI`, `MONGODB_DB` (requeridos), `PREFIX` (default `!`), `CREATOR_NUMBERS`, `BOT_NUMBERS`
 - `QR_ACCESS_TOKEN`, `PORT`, `AUTH_DIR` (Docker: `/app/bridge/auth`)
 - `NSFW_PROVIDER` (default `disabled`), `NSFW_THRESHOLD`, `NSFW_TIMEOUT_MS`, `NSFW_MAX_BYTES`, `NSFW_KICK_THRESHOLD`
-- `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`; AI y provider NSFW gemini); `OPENROUTER_API_KEY`, `OPENAI_API_KEY`; `SIGHTENGINE_API_USER/SECRET`, `NUDENET_URL`, `NSFW_CUSTOM_URL`
+- `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.5-flash`; AI y provider NSFW gemini); `OPENROUTER_API_KEY`, `OPENAI_API_KEY`; `SIGHTENGINE_API_USER/SECRET`, `NUDENET_URL`, `NSFW_CUSTOM_URL`
 - `AI_PROVIDER` (`gemini`/`openai`), `AI_SYSTEM_PROMPT` (sobrescribe el prompt por defecto), `AI_COMMAND_CONFIRM_MS` (TTL de confirmación, default 90000)
 - `YTDLP_PATH` (default `yt-dlp`), `YTDLP_COOKIES`
 
@@ -74,7 +74,7 @@
 - Niveles por comando: `user` / `admin` / `creator` (por defecto `user`). Pre-chequeo en el runner + validación del plugin original.
 - Comandos destructivos piden confirmación (`sí`/`no`, TTL `AI_COMMAND_CONFIRM_MS`, default 90 s). Confirma el mismo remitente o un admin/creador que mencione al bot. Al construir el mensaje sintético se quita al bot de `mentionedJid` para que `targetJid` no lo elija como objetivo.
 - `buscar_persona` usa `AiStore.recentMessages` (nombre + JID); si hay ambigüedad el modelo pregunta.
-- Si Google retira el modelo configurado, `geminiClient._generate` lee el reemplazo del propio error (`use models/...`), reintenta una vez y lo recuerda en memoria (`config.model`); log `[ai] El modelo "<viejo>" no esta disponible; reintentando con "<nuevo>".`
+- Si Google retira el modelo configurado o el nuevo está saturado (`503 UNAVAILABLE` / "high demand"), `geminiClient._generate` reintenta hasta 3 intentos: primero con el reemplazo que sugiere el propio error (`use models/...`), luego con la lista `FALLBACK_MODELS` (`gemini-3.5-flash`, `3.8`, `3.7`, `3.6`). El que funciona se recuerda en memoria (`config.model`) y queda el log `[ai] Modelo "<x>" no disponible (...); probando "<y>".`
 
 ## Control por grupo (apagado y módulos)
 - `group_settings` (`GroupSettingsStore`, singleton `getGroupSettingsStore()`): por grupo `{ botEnabled, disabledModules[] }`.

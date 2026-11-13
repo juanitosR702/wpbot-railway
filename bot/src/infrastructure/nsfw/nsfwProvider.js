@@ -289,7 +289,7 @@ function makeGeminiProvider(config) {
   const apiKey = env("GEMINI_API_KEY");
   if (!apiKey) return makeLocalProvider();
 
-  const model = env("NSFW_GEMINI_MODEL", env("GEMINI_MODEL", "gemini-3.8-flash"));
+  const model = env("NSFW_GEMINI_MODEL", env("GEMINI_MODEL", "gemini-3.5-flash"));
   const apiUrl = env("GEMINI_API_URL", config.geminiApiUrl).replace(/\/$/, "");
   const fallback = makeLocalProvider();
 

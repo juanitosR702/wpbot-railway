@@ -76,6 +76,31 @@ test("gemini: chatWithTools tambien usa el modelo sugerido", async () => {
   );
 });
 
+test("gemini: si el modelo esta saturado (503) usa uno de respaldo", async () => {
+  const urls = [];
+  await withFetch(
+    async (url) => {
+      urls.push(url);
+      if (url.includes("gemini-3.8-flash")) {
+        return jsonResponse(503, {
+          error: { status: "UNAVAILABLE", message: "This model is currently experiencing high demand." },
+        });
+      }
+      return jsonResponse(200, { candidates: [{ content: { parts: [{ text: "ok" }] } }] });
+    },
+    async () => {
+      const ai = makeClient({ model: "gemini-3.8-flash" });
+      const result = await ai.chat([{ role: "user", content: "hola" }]);
+
+      assert.strictEqual(result.ok, true);
+      assert.strictEqual(result.model, "gemini-3.5-flash");
+      assert.strictEqual(urls.length, 2);
+      assert.ok(urls[1].includes("gemini-3.5-flash"));
+      assert.strictEqual(ai.config.model, "gemini-3.5-flash");
+    },
+  );
+});
+
 test("gemini: no reintenta con errores que no sugieren un modelo", async () => {
   const urls = [];
   await withFetch(
