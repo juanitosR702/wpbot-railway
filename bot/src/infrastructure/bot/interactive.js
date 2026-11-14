@@ -19,6 +19,10 @@ import * as baileys from "@whiskeysockets/baileys";
 // `interactiveResponseMessage.nativeFlowResponseMessage.paramsJson` (campo `id`).
 
 const MAX_ROW_TITLE = 24;
+const MAX_FOOTER = 60;
+const MAX_BODY = 1024;
+const MAX_BUTTON_TEXT = 20;
+const MAX_SECTION_TITLE = 24;
 // Si relayMessage no responde en este tiempo, se considera fallo y el plugin
 // manda el menú en texto para no dejar al usuario esperando.
 const SEND_TIMEOUT_MS = 8000;
@@ -43,14 +47,29 @@ function trimTitle(value, max = MAX_ROW_TITLE) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+// WhatsApp rechaza (o ignora) el mensaje si el cuerpo supera 1024 caracteres.
+function clipBody(value) {
+  const text = String(value || "").trim();
+  if (text.length <= MAX_BODY) return text;
+  const cut = text.slice(0, MAX_BODY - 1);
+  const lastBreak = cut.lastIndexOf("\n");
+  return `${(lastBreak > MAX_BODY * 0.6 ? cut.slice(0, lastBreak) : cut).trimEnd()}…`;
+}
+
+function clipFooter(value) {
+  const text = String(value || "").trim();
+  if (text.length <= MAX_FOOTER) return text;
+  return `${text.slice(0, MAX_FOOTER - 1).trimEnd()}…`;
+}
+
 function toSection(section) {
   return {
-    title: trimTitle(section.title || "Opciones", 24),
+    title: trimTitle(section.title || "Opciones", MAX_SECTION_TITLE),
     highlight_label: "",
     rows: (section.rows || []).map((row) => ({
       header: row.header || "",
       title: trimTitle(row.title || row.rowId || ""),
-      description: row.description || "",
+      description: trimTitle(row.description || "", 72),
       id: String(row.rowId ?? row.id ?? ""),
     })),
   };
@@ -62,13 +81,13 @@ function buildInteractive(payload) {
     : [{ title: payload.title || "Opciones", rows: payload.rows || [] }].map(toSection);
 
   const interactiveMessage = {
-    body: { text: String(payload.text || "").trim() || " " },
+    body: { text: clipBody(payload.text) || " " },
     nativeFlowMessage: {
       buttons: [
         {
           name: "single_select",
           buttonParamsJson: JSON.stringify({
-            title: trimTitle(payload.buttonText || "Ver opciones", 24),
+            title: trimTitle(payload.buttonText || "Ver opciones", MAX_BUTTON_TEXT),
             sections: listSections,
           }),
         },
@@ -81,13 +100,13 @@ function buildInteractive(payload) {
   // rechazado/ignorado por el cliente.
   if (payload.title) {
     interactiveMessage.header = {
-      title: String(payload.title),
+      title: trimTitle(payload.title, 60),
       subtitle: "",
       hasMediaAttachment: false,
     };
   }
 
-  if (payload.footer) interactiveMessage.footer = { text: String(payload.footer) };
+  if (payload.footer) interactiveMessage.footer = { text: clipFooter(payload.footer) };
 
   return interactiveMessage;
 }

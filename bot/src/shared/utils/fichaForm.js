@@ -182,6 +182,26 @@ export function renderFicha(form, values = {}, meta = {}) {
   return lines.join("\n").trim();
 }
 
+/** Ficha en progreso: se muestra completa en cada paso (con el campo actual marcado). */
+export function renderProgress(form, values = {}, currentIndex = -1) {
+  const lines = [];
+
+  if (form?.header) lines.push(form.header, "");
+
+  (form?.fields || []).forEach((field, index) => {
+    if (field.section) {
+      lines.push(`✦ *${field.section}*`);
+      return;
+    }
+    const value = values[index];
+    const filled = value !== undefined && value !== null && String(value).trim() !== "";
+    const mark = index === currentIndex ? "👉" : "•";
+    lines.push(`${mark} ${field.label}: ${filled ? value : "…"}`);
+  });
+
+  return lines.join("\n").trim();
+}
+
 /** Resumen legible de la configuración (para `!setficha ver`). */
 export function renderFormConfig(form) {
   const lines = [];

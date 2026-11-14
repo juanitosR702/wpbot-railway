@@ -10,6 +10,7 @@ import {
   parseFieldLines,
   renderFicha,
   renderFormConfig,
+  renderProgress,
   rowTitle,
 } from "../../../shared/utils/fichaForm.js";
 
@@ -218,16 +219,22 @@ async function sendPrompt(ctx, session) {
   const field = step.field;
   const progress = `${session.step + 1}/${session.steps.length}`;
 
+  // La ficha completa se muestra en cada mensaje: el usuario siempre ve lo que
+  // lleva lleno y lo que falta, aunque WhatsApp solo permita un desplegable por
+  // mensaje (no se pueden poner varios en un mismo mensaje).
+  const formView = renderProgress(session.form, session.values, step.index);
+  const head = `📝 *Ficha (${progress})*\n\n${formView}\n\n👉 *Ahora:* ${field.label}`;
+
   if (field.options?.length) {
-    // Las opciones van también en el texto: si WhatsApp no renderiza la lista
-    // (o el usuario no la ve), puede responder con el número.
+    // Las opciones van también en el texto: si WhatsApp falla al pintar la
+    // lista, el usuario puede responder con el número.
     const numbered = field.options
       .map((option, index) => `${index + 1}. ${option}`)
       .join("\n");
 
     await sendList(ctx, {
-      text: `📝 *Ficha (${progress})*\n\n${field.label}\n\n${numbered}`,
-      footer: "Toca «Ver opciones» o responde con el número. Escribe *cancelar* para salir.",
+      text: `${head}\n\n${numbered}`,
+      footer: "Toca «Ver opciones» o responde con el número.",
       buttonText: "Ver opciones",
       rows: field.options.map((option, index) => ({
         rowId: `f:o:${session.step}:${index}`,
@@ -238,7 +245,7 @@ async function sendPrompt(ctx, session) {
   }
 
   await ctx.sendMessage({
-    text: `📝 *Ficha (${progress})*\n\n${field.label}\n\n_Escribe *cancelar* para salir._`,
+    text: `${head}\n\n_Escribe tu respuesta. Para salir: *cancelar*._`,
   });
   return HALT;
 }
