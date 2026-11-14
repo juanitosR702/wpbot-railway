@@ -425,10 +425,13 @@ export function normalizeNvidia(text = "") {
   const raw = String(text || "").trim();
   const lower = raw.toLowerCase();
   const safetyMatch = lower.match(/user safety:\s*(safe|unsafe)/);
-  const unsafe = safetyMatch ? safetyMatch[1] === "unsafe" : null;
+  // Llama Guard responde solo `safe` o `unsafe` (+ categorias S1,S2... en la linea siguiente).
+  const bareMatch = lower.match(/^\s*(safe|unsafe)\b/);
+  const unsafe = safetyMatch ? safetyMatch[1] === "unsafe" : bareMatch ? bareMatch[1] === "unsafe" : null;
 
   const catMatch = raw.match(/safety categories:\s*([^\n\r]+)/i);
-  const categories = (catMatch ? catMatch[1] : "").trim();
+  const bareCodes = raw.split(/[\r\n]+/).slice(1).join(" ").replace(/[\s,]+/g, " ").trim();
+  const categories = (catMatch ? catMatch[1] : "").trim() || (bareMatch && !safetyMatch && unsafe ? bareCodes : "");
 
   const matched = NVIDIA_UNSAFE_TOKENS.filter((token) => categories.toLowerCase().includes(token));
 
@@ -446,6 +449,15 @@ export function normalizeNvidia(text = "") {
   };
 }
 
+const NVIDIA_SAFETY_PROMPT =
+  "Classify this image for content safety. Reply only in this format:\n" +
+  "User Safety: safe | unsafe\nSafety Categories: <comma separated categories, or none>";
+
+// Un modelo puede estar en el catalogo de NVIDIA pero no habilitado para la
+// cuenta (404 "Function id ... is not found") o no aceptar imagenes. Se prueban
+// en orden y el que no sirve se descarta en memoria.
+const NVIDIA_DEFAULT_MODELS = ["meta/llama-guard-4-12b", "nvidia/nemotron-3.5-content-safety"];
+
 function makeNvidiaProvider() {
   const apiKey = env("NSFW_NVIDIA_API_KEY");
   if (!apiKey) return makeLocalProvider();
@@ -454,43 +466,64 @@ function makeNvidiaProvider() {
     apiKey,
     baseURL: env("NSFW_NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
   });
-  const model = env("NSFW_NVIDIA_MODEL", "nvidia/nemotron-3.5-content-safety");
+  const configured = env("NSFW_NVIDIA_MODEL").trim();
+  const models = [...new Set([configured, ...NVIDIA_DEFAULT_MODELS].filter(Boolean))];
+  const unavailable = new Set();
   const fallback = makeLocalProvider();
+
+  async function classify(model, buffer, options) {
+    const b64 = buffer.toString("base64");
+    const mimeType = options.mimeType || "image/jpeg";
+    const body = {
+      model,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: NVIDIA_SAFETY_PROMPT },
+            { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } },
+          ],
+        },
+      ],
+      max_tokens: 100,
+      temperature: 0.01,
+      top_p: 0.95,
+    };
+    if (model.includes("content-safety")) {
+      body.extra_body = {
+        chat_template_kwargs: { request_categories: "/categories", enable_thinking: false },
+      };
+    }
+    const completion = await client.chat.completions.create(body, { signal: options.signal });
+    const text = completion.choices?.[0]?.message?.content || "";
+    return normalizeNvidia(text);
+  }
 
   return {
     name: "nvidia",
     async analyze(buffer, options = {}) {
-      try {
-        const b64 = buffer.toString("base64");
-        const mimeType = options.mimeType || "image/jpeg";
-        const completion = await client.chat.completions.create(
-          {
-            model,
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: "Classify this image for content safety." },
-                  { type: "image_url", image_url: { url: `data:${mimeType};base64,${b64}` } },
-                ],
-              },
-            ],
-            max_tokens: 100,
-            temperature: 0.01,
-            top_p: 0.95,
-            extra_body: {
-              chat_template_kwargs: { request_categories: "/categories", enable_thinking: false },
-            },
-          },
-          { signal: options.signal },
-        );
-
-        const text = completion.choices?.[0]?.message?.content || "";
-        return normalizeNvidia(text);
-      } catch (err) {
-        console.warn("[nsfw] NVIDIA falló, usando local:", err?.message || err);
-        return fallback.analyze(buffer, options);
+      for (const model of models) {
+        if (unavailable.has(model)) continue;
+        try {
+          return await classify(model, buffer, options);
+        } catch (err) {
+          const status = err?.status ?? err?.response?.status;
+          const message = String(err?.message || "");
+          if (status === 404 || status === 400 || /does not support multi-modal|Function id .* is not found/i.test(message)) {
+            unavailable.add(model);
+            console.warn(`[nsfw] NVIDIA: modelo "${model}" no sirve para esta cuenta (${status || message}); probando el siguiente.`);
+            continue;
+          }
+          if (status === 422) {
+            console.warn(`[nsfw] NVIDIA: el modelo "${model}" no pudo procesar este media; probando el siguiente.`);
+            continue;
+          }
+          console.warn("[nsfw] NVIDIA falló, usando local:", message || err);
+          return fallback.analyze(buffer, options);
+        }
       }
+      console.warn("[nsfw] NVIDIA: ningún modelo disponible, usando local.");
+      return fallback.analyze(buffer, options);
     },
   };
 }

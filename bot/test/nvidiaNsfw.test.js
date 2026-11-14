@@ -24,6 +24,16 @@ test("normalizeNvidia: safe pero categoría de riesgo -> score 0.9", () => {
   assert.strictEqual(r.score, 0.9);
 });
 
+test("normalizeNvidia: Llama Guard 'safe' -> score 0", () => {
+  assert.strictEqual(normalizeNvidia("safe").score, 0);
+});
+
+test("normalizeNvidia: Llama Guard 'unsafe' con códigos -> score 1", () => {
+  const r = normalizeNvidia("unsafe\nS2,S3");
+  assert.strictEqual(r.score, 1);
+  assert.ok(/S2/.test(r.reason));
+});
+
 test("normalizeNvidia: respuesta vacía/inesperada -> score 0", () => {
   assert.strictEqual(normalizeNvidia("").score, 0);
   assert.strictEqual(normalizeNvidia("sin formato esperado").score, 0);
