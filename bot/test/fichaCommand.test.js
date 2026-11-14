@@ -174,3 +174,41 @@ test("ficha: avisa cuando no hay grupo de almacenamiento", async () => {
   assert.match(reply, /!fichadestino/);
   assert.strictEqual(sent.length, 0);
 });
+
+test("ficha: !fichadestino guarda el JID completo del grupo", async () => {
+  const saved = [];
+  const handler = await setup(fakeStore({
+    destination: () => "",
+    setDestination: (jid) => saved.push(jid),
+  }));
+  // `ctx.phone` llega sin `@g.us` porque el router usa cleanJid().
+  const { ctx, sent } = makeCtxWithSender(6, {
+    phone: "120363000000000321",
+    isCommand: true,
+    command: "fichadestino",
+  });
+
+  const reply = await handler(ctx);
+
+  assert.deepStrictEqual(saved, ["120363000000000321@g.us"]);
+  assert.strictEqual(sent.at(-1).jid, "120363000000000321@g.us");
+  assert.match(reply, /Listo/);
+});
+
+test("ficha: !fichadestino acepta un JID explícito", async () => {
+  const saved = [];
+  const handler = await setup(fakeStore({
+    destination: () => "",
+    setDestination: (jid) => saved.push(jid),
+  }));
+  const { ctx } = makeCtxWithSender(7, {
+    phone: "120363000000000321",
+    isCommand: true,
+    command: "fichadestino",
+    commandBody: "120363000000000555@g.us",
+  });
+
+  await handler(ctx);
+
+  assert.deepStrictEqual(saved, ["120363000000000555@g.us"]);
+});

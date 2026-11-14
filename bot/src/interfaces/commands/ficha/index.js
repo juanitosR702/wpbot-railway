@@ -458,9 +458,11 @@ async function setDestination(ctx, store, options) {
   }
 
   // Se acepta un JID explícito; si no, se usa el grupo donde se ejecutó.
+  // `ctx.phone` viene normalizado (sin `@g.us`), así que hay que reconstruir el
+  // JID del grupo: enviar a un número suelto lo trataría como chat privado.
   const raw = String(ctx.commandBody || "").trim();
-  const explicit = raw.match(/\d{10,}@g\.us/)?.[0] || null;
-  const destination = explicit || ctx.phone;
+  const explicit = raw.match(/(\d{10,})@g\.us/)?.[1] || null;
+  const destination = explicit ? `${explicit}@g.us` : `${ctx.phone}@g.us`;
 
   store.setDestination(destination);
   await store.save();
@@ -473,7 +475,7 @@ async function setDestination(ctx, store, options) {
     return `⚠️ Guardé el destino (${destination}) pero no pude escribir en él: ${err?.message || err}`;
   }
 
-  const extra = explicit && destination !== ctx.phone ? `\n\n_(Configurado desde otro grupo.)_` : "";
+  const extra = explicit && explicit !== ctx.phone ? `\n\n_(Configurado desde otro grupo.)_` : "";
   return `✅ Listo. Las fichas se enviarán a este grupo.${extra}`;
 }
 
