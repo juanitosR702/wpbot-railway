@@ -61,12 +61,18 @@ Si el valor no decodifica o el archivo no contiene cookies de `youtube.com`, se 
 
 **SoundCloud no sirve como respaldo**: sin sesión solo entrega 30 s de muestra (`hls_mp3_1_0_preview`) y algunos temas están protegidos con DRM. Se probó y se descartó.
 
+### 403 al descargar el audio (`unable to download video data`)
+
+Algunos videos (típicamente de discográficas) resuelven el formato de audio DASH pero rechazan los bytes con `HTTP Error 403`. En ese caso se reintenta con el **formato progresivo** (video+audio en un solo archivo) y se extrae la pista de audio.
+
+Ojo: yt-dlp **no posprocesa** al escribir en stdout, aunque se pase `--extract-audio`; entrega el stream tal cual (webm/mp4). Por eso el respaldo progresivo pasa el buffer por `transcodeToMp3()` (ffmpeg: `-vn -acodec libmp3lame -b:a 128k`), que reduce 14 MB de mp4 a ~3,4 MB de mp3 real.
+
 ### Limitaciones
 
 - Tamaño máximo: 15MB (límite de WhatsApp); un audio mayor corta en `stdout maxBuffer length exceeded`
 - Duración máxima: ~10min a 192kbps
 - Sin búsqueda persistente: siempre descarga el primer resultado
-- Enlaces directos: solo HTTPS de YouTube. SoundCloud se usa como respaldo de búsquedas, no como enlace de entrada
+- Enlaces directos: solo HTTPS de YouTube
 
 ## Env vars
 
@@ -85,6 +91,7 @@ Si el valor no decodifica o el archivo no contiene cookies de `youtube.com`, se 
 ```
 [song] Error: <mensaje>
 [song] YouTube pidió verificación con "<cliente>"; probando otro cliente.
+[song] El audio DASH devolvió 403; probando el formato progresivo.
 [entrypoint] cookies de YouTube escritas en /app/bridge/auth/cookies.txt
 [entrypoint] YTDLP_COOKIES_GZ_B64 no se pudo descomprimir; se ignora.
 [entrypoint] YTDLP_COOKIES_B64 no se pudo decodificar; se ignora.

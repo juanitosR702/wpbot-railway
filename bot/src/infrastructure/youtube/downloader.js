@@ -1,4 +1,5 @@
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
+import { access, constants } from "fs/promises";
 import { env } from "../../shared/config/env.js";
 
 const YTDLP_BIN = env("YTDLP_PATH", "yt-dlp");
@@ -9,6 +10,7 @@ const YTDLP_JS_RUNTIMES = env("YTDLP_JS_RUNTIMES").trim();
 const YTDLP_EXTRA_ARGS = env("YTDLP_EXTRA_ARGS").trim();
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 120_000;
+const CONVERT_TIMEOUT_MS = 120_000;
 const BASE_ARGS = ["-4", "--no-warnings", "--retries", "3", "--socket-timeout", "20"];
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
 
@@ -20,6 +22,11 @@ const CLIENT_VARIANTS = [
   "youtube:player_client=tv_simply,web_embedded",
   "youtube:player_client=android_vr",
 ];
+
+// Algunos videos sirven audio DASH que YouTube rechaza con 403 ("unable to
+// download video data"). El formato progresivo (video+audio en un solo archivo)
+// sí se entrega; ffmpeg lo convierte a mp3 igual que el resto.
+const PROGRESSIVE_FORMAT = "best[protocol^=http][acodec!=none][vcodec!=none]/bestaudio";
 
 /** Divide una cadena de argumentos respetando comillas simples y dobles. */
 function splitArgs(value) {
@@ -35,6 +42,83 @@ function splitArgs(value) {
 /** true si el error de yt-dlp es el chequeo anti-bot de YouTube (bloqueo por IP). */
 export function isBotCheck(err) {
   return BOT_CHECK_PATTERN.test(`${err?.stderr || ""} ${err?.message || ""}`);
+}
+
+/** true si el buffer ya es un mp3 (ID3 o cabecera de frame). */
+export function looksLikeMp3(buffer) {
+  if (!buffer || buffer.length < 3) return false;
+  if (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) return true;
+  return buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0;
+}
+
+async function resolveFfmpeg() {
+  // Mismo criterio que en los stickers: ffmpeg-static puede no tener binario
+  // (el Dockerfile instala con --ignore-scripts) y entonces se usa el del PATH.
+  try {
+    const mod = await import("ffmpeg-static");
+    if (mod.default) {
+      await access(mod.default, constants.X_OK);
+      return mod.default;
+    }
+  } catch {
+    // se usa el ffmpeg del sistema
+  }
+  return "ffmpeg";
+}
+
+/**
+ * yt-dlp no posprocesa cuando escribe en stdout: entrega el stream descargado
+ * (webm u mp4 progresivo). Aquí se extrae la pista de audio y se convierte a mp3.
+ */
+export async function transcodeToMp3(buffer) {
+  if (looksLikeMp3(buffer)) return buffer;
+  const ffmpeg = await resolveFfmpeg();
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpeg, [
+      "-hide_banner", "-loglevel", "error",
+      "-i", "pipe:0",
+      "-vn", "-acodec", "libmp3lame", "-b:a", "128k", "-f", "mp3",
+      "pipe:1",
+    ], { windowsHide: true });
+
+    const chunks = [];
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      const err = new Error("La conversión a mp3 tardó demasiado.");
+      err.stderr = stderr;
+      reject(err);
+    }, CONVERT_TIMEOUT_MS);
+
+    child.stdout.on("data", (chunk) => chunks.push(chunk));
+    child.stderr.on("data", (chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-2000);
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      err.stderr = stderr;
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        const err = new Error(`ffmpeg terminó con código ${code}`);
+        err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.end(buffer);
+  });
+}
+
+/** true si conviene reintentar con el formato progresivo (403 en el audio DASH). */
+export function needsProgressiveFallback(err) {
+  const raw = `${err?.stderr || ""} ${err?.message || ""}`.toLowerCase();
+  return /http error 403|forbidden|requested format is not available/.test(raw);
 }
 
 /** Clientes a probar, en orden: el configurado primero y luego los de respaldo. */
@@ -160,16 +244,19 @@ export class YouTubeDownloader {
     return { value: result.url, searchResult: result };
   }
 
-  async _downloadAudio(url, extractorArgs) {
-    const { stdout } = await this._exec([
+  async _downloadAudio(url, extractorArgs, format) {
+    const args = [
       ...this._baseArgs(extractorArgs),
       "--no-playlist",
       "--extract-audio",
       "--audio-format", "mp3",
       "--audio-quality", "5",
-      "--output", "-",
-      url,
-    ], { encoding: "buffer", maxBuffer: MAX_FILE_SIZE + 1024 * 1024 });
+    ];
+    if (format) args.push("--format", format);
+    const { stdout } = await this._exec([...args, "--output", "-", url], {
+      encoding: "buffer",
+      maxBuffer: MAX_FILE_SIZE + 1024 * 1024,
+    });
 
     const buffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
     if (!buffer.length) throw new Error("yt-dlp no devolvió audio.");
@@ -179,15 +266,35 @@ export class YouTubeDownloader {
 
   async _downloadYouTube(url) {
     let lastError = null;
+    let retryProgressive = false;
+
     for (const variant of extractorVariants()) {
       try {
         return await this._downloadAudio(url, variant);
       } catch (err) {
         lastError = err;
+        if (needsProgressiveFallback(err)) {
+          retryProgressive = true;
+          break;
+        }
         if (!isBotCheck(err)) throw err;
         console.warn(`[song] YouTube pidió verificación con "${variant}"; probando otro cliente.`);
       }
     }
+
+    if (retryProgressive) {
+      console.warn("[song] El audio DASH devolvió 403; probando el formato progresivo.");
+      for (const variant of extractorVariants()) {
+        try {
+          const raw = await this._downloadAudio(url, variant, PROGRESSIVE_FORMAT);
+          return await transcodeToMp3(raw);
+        } catch (err) {
+          lastError = err;
+          if (!needsProgressiveFallback(err) && !isBotCheck(err)) throw err;
+        }
+      }
+    }
+
     throw lastError;
   }
 

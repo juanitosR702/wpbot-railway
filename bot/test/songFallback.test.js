@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { isBotCheck, extractorVariants, describeYtDlpError } from "../src/infrastructure/youtube/downloader.js";
+import {
+  isBotCheck,
+  needsProgressiveFallback,
+  extractorVariants,
+  describeYtDlpError,
+  looksLikeMp3,
+} from "../src/infrastructure/youtube/downloader.js";
 
 const botCheckError = () => {
   const err = new Error("Command failed: yt-dlp --output - URL");
@@ -41,4 +47,24 @@ test("describeYtDlpError: bot check indica cargar cookies al admin", () => {
 test("describeYtDlpError: maxBuffer se traduce a un mensaje legible", () => {
   const err = new Error("stdout maxBuffer length exceeded");
   assert.match(describeYtDlpError(err), /demasiado largo/i);
+});
+
+test("needsProgressiveFallback: detecta el 403 del audio DASH", () => {
+  const err = new Error("Command failed");
+  err.stderr = "ERROR: unable to download video data: HTTP Error 403: Forbidden";
+  assert.strictEqual(needsProgressiveFallback(err), true);
+});
+
+test("needsProgressiveFallback: no se activa por bot check ni por video privado", () => {
+  assert.strictEqual(needsProgressiveFallback(botCheckError()), false);
+  const priv = new Error("Command failed");
+  priv.stderr = "ERROR: [youtube] x: Private video";
+  assert.strictEqual(needsProgressiveFallback(priv), false);
+});
+
+test("looksLikeMp3: reconoce ID3 y frames, rechaza webm", () => {
+  assert.strictEqual(looksLikeMp3(Buffer.from([0x49, 0x44, 0x33, 0x04])), true);
+  assert.strictEqual(looksLikeMp3(Buffer.from([0xff, 0xfb, 0x90, 0x00])), true);
+  assert.strictEqual(looksLikeMp3(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])), false);
+  assert.strictEqual(looksLikeMp3(Buffer.alloc(0)), false);
 });
