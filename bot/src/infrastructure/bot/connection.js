@@ -6,6 +6,7 @@ import {
   Browsers,
 } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
+import { sendListMessage } from "./interactive.js";
 import qrImg from "qrcode";
 import { EventEmitter } from "events";
 import { rmSync, readdirSync, existsSync } from "fs";
@@ -176,6 +177,13 @@ export class Connection extends EventEmitter {
   async sendMessage(jid, content) {
     const msg = typeof content === "string" ? { text: content } : content;
     return this.sock.sendMessage(jid, msg);
+  }
+
+  // Menú desplegable (lista interactiva). No usa `sendMessage` porque Baileys
+  // v6 no soporta `sections`; ver `interactive.js`.
+  async sendList(jid, payload) {
+    if (!this.sock) throw new Error("WhatsApp no conectado");
+    return sendListMessage(this.sock, jid, payload);
   }
 
   async disconnect() {

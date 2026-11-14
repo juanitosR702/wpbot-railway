@@ -22,6 +22,7 @@ import { aiPlugin } from "../interfaces/commands/ai/index.js";
 import { casinoPlugin } from "../interfaces/commands/casino/index.js";
 import { economyPlugin } from "../interfaces/commands/economy/index.js";
 import { groupAdminPlugin, handleGroupParticipantsUpdate } from "../interfaces/commands/groupAdmin/index.js";
+import { fichaPlugin } from "../interfaces/commands/ficha/index.js";
 import { helpPlugin } from "../interfaces/commands/help/index.js";
 import { levelsPlugin } from "../interfaces/commands/levels/index.js";
 import { moderationPlugin } from "../interfaces/commands/moderation/index.js";
@@ -292,6 +293,7 @@ const coreCommandsPlugin = {
 
 router.registerPlugin(coreCommandsPlugin);
 router.registerPlugin(groupAdminPlugin, { ownerPolicy });
+router.registerPlugin(fichaPlugin, { ownerPolicy });
 router.registerPlugin(ownerPlugin, { ownerPolicy, ownerRepository });
 router.registerPlugin(aiPlugin, { ownerRepository, ownerPolicy, router });
 router.registerPlugin(antiNsfwPlugin, { ownerPolicy });
@@ -430,6 +432,7 @@ connection.on("message", async (msg) => {
 
   const reply = await router.route(msg, {
     sendMessage: (jid, content) => connection.sendMessage(jid, content),
+    sendList: (jid, payload) => connection.sendList(jid, payload),
     deleteMessage: (jid, key) => connection.sock?.sendMessage(jid, { delete: key }),
     getGroupMetadata: (jid) => connection.sock?.groupMetadata(jid),
     updateGroupSetting: (jid, setting) => connection.sock?.groupSettingUpdate(jid, setting),

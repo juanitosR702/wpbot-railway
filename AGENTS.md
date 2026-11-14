@@ -88,6 +88,20 @@
 - `Router.setGroupGate(fn)` se inyecta en `bootstrap.js`: `null` = sin restricciones, `{ disabled }` = apagado total, `{ allows(plugin) }` filtra handlers por `meta.plugin`. `GROUP_CONFIG_COMMANDS` (`!bot`, `!modulo`, `!modulos`) siempre pasan para poder reactivar aunque el bot esté apagado.
 
 
+## Fichas de ingreso (plugin `fichas`)
+- Comandos: `!ficha` (cualquier miembro del grupo), `!setficha [dragon|ver|reset]` y `!fichadestino [ver|off|JID]` (admin del grupo o creador).
+- La ficha se configura **por grupo** en Mongo (`ficha_settings`, `FichaStore`): `forms[<jid>] = { header, footer, fields[] }`. Sin ficha propia se usa `DEFAULT_FICHA` (genérica, sin marca de ningún clan).
+- `!setficha dragon` instala el preset `FICHA_PRESETS.dragon` (ficha GHOST DRAGONS exacta que pidió el usuario) y luego se puede editar.
+- Formato de campos (asistente de 3 pasos: encabezado → campos → pie):
+  - `# SECCION` → título de sección
+  - `Campo | op1, op2` → **desplegable** (máx. 9 opciones, porque WhatsApp permite 10 filas y una se reserva)
+  - `Campo` → texto libre (máx. 400 caracteres)
+- `!fichadestino` se ejecuta **en el grupo almacén**: guarda ese JID como destino global (`destination`). Acepta un JID explícito, `ver` y `off`. El envío de la ficha terminada va **directo** a ese grupo con `services.sendMessage` (sin aprobación de admins).
+- Sesiones de llenado en memoria (`Map`, TTL 20 min), clave `sender:grupo`; se pierden al reiniciar a propósito. Al final hay vista previa con Enviar / Corregir campo / Cancelar.
+- **Listas desplegables**: Baileys v6 NO acepta `sections` en `sendMessage` (lo trata como media y lanza "Invalid media type"). `infrastructure/bot/interactive.js` construye el `interactiveMessage` con botón `single_select` (`generateWAMessageFromContent` + `relayMessage`), `Connection.sendList` lo expone y el router lo pasa como `ctx.sendList`. La respuesta llega en `interactiveResponseMessage.nativeFlowResponseMessage.paramsJson` y el router la normaliza a `ctx.selection` (igual que `listResponseMessage`/botones). Si el transporte no la soporta o WhatsApp la rechaza, el plugin cae a **menú numerado en texto**.
+- `ctx.selection` convive con `ctx.text` (vacío en las respuestas de lista).
+
+
 ## Console logs
 - `[cmd] <command> (<n> args) — <phone> (<sender>) en grupo "<name>" (<id>)`
 - `[anti_nsfw] <group>: <mediaType> → <provider> score=<s> nsfw=<b>`

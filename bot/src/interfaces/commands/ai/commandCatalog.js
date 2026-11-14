@@ -60,6 +60,11 @@ const INFO = {
   bot: { desc: "Enciende o apaga el bot en este grupo", usage: "!bot on|off", level: A, keywords: ["apaga el bot", "enciende el bot", "desactiva el bot"], destructive: true },
   modulo: { desc: "Activa o desactiva un módulo en este grupo (economía, casino, ia...)", usage: "!modulo on|off <modulo>", level: A, keywords: ["desactiva economia", "activa modulo", "modulos del grupo"], destructive: true },
   modulos: { desc: "Muestra el menú numerado de módulos para activarlos o desactivarlos", level: A, keywords: ["modulos", "funciones del grupo", "menu"] },
+
+  // ---- Fichas de ingreso ----
+  ficha: { desc: "Rellena la ficha de ingreso del grupo paso a paso (menú desplegable)", level: U, keywords: ["ficha", "formulario", "ingreso", "registro", "unirme", "solicitud"], groupOnly: true },
+  setficha: { desc: "Configura la ficha del grupo: encabezado, campos y pie", usage: "!setficha [dragon|ver|reset]", level: A, keywords: ["configurar ficha", "campos ficha", "crear ficha", "ghost dragons"], groupOnly: true, destructive: true },
+  fichadestino: { desc: "Marca este grupo (o un JID) como almacén de fichas", usage: "!fichadestino [off|ver]", level: A, keywords: ["grupo fichas", "almacen fichas", "destino fichas"], groupOnly: true, destructive: true },
   tagall: { desc: "Menciona a todos los participantes", level: A, keywords: ["menciona a todos", "tag all", "avisa a todos"] },
   hidetag: { desc: "Menciona a todos sin mostrar el listado", level: A, keywords: ["menciona invisible", "hidetag"] },
   mutechat: { desc: "Silencia el grupo: solo admins usan comandos", level: A, keywords: ["silencia grupo", "mute grupo"] },

@@ -66,13 +66,16 @@ export class Router {
     const name = msg.pushName || sender;
     const isGroup = rawJid.endsWith("@g.us");
     const mediaType = this._extractMediaType(msg.message);
+    // Respuestas a listas/botones de WhatsApp (menús desplegables).
+    const selection = this._extractSelection(msg.message);
 
-    if (!text && !mediaType) return null;
+    if (!text && !mediaType && !selection) return null;
 
     const context = {
       phone,
       sender,
       text,
+      selection,
       commandBody: input.body,
       prefix: this.prefix,
       isCommand: input.isCommand,
@@ -84,6 +87,12 @@ export class Router {
       raw: msg,
       services,
       sendMessage: async (content) => services.sendMessage?.(rawJid, content),
+      // Lista desplegable; si el transporte no la soporta (Cloud API), el
+      // plugin que la use debe caer a texto.
+      sendList: async (payload) => {
+        if (!services.sendList) throw new Error("sendList no disponible");
+        return services.sendList(rawJid, payload);
+      },
       reply: async (content) => services.sendMessage?.(rawJid, content),
       deleteMessage: async (key) => services.deleteMessage?.(rawJid, key),
       downloadMedia: async (message = msg) => services.downloadMedia?.(message),
@@ -206,6 +215,36 @@ export class Router {
     if (m.videoMessage) return m.videoMessage.gifPlayback ? "gif" : "video";
     if (m.documentMessage?.mimetype?.startsWith("image/")) return "image";
     if (m.documentMessage?.mimetype?.startsWith("video/")) return "video";
+    return null;
+  }
+
+  // Id de la fila elegida en una lista interactiva o en un botón. Los plugins
+  // que usan menús desplegables lo leen desde `ctx.selection`; el texto normal
+  // (`ctx.text`) queda vacío para no confundirlo con lo que escribió el usuario.
+  //
+  // Se cubren las dos formas: `listResponseMessage` (listas clásicas) y
+  // `interactiveResponseMessage` (botón `single_select` / native flow, que trae
+  // el id dentro de `paramsJson`).
+  _extractSelection(message) {
+    const m = this._unwrapMessage(message);
+
+    const direct =
+      m?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+      m?.buttonsResponseMessage?.selectedButtonId ||
+      m?.templateButtonReplyMessage?.selectedId;
+    if (direct) return String(direct);
+
+    const paramsJson = m?.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
+    if (paramsJson) {
+      try {
+        const params = JSON.parse(paramsJson);
+        const id = params?.id ?? params?.selectedId;
+        if (id) return String(id);
+      } catch {
+        // paramsJson inválido: se ignora.
+      }
+    }
+
     return null;
   }
 }

@@ -15,6 +15,7 @@ const CATEGORY_META = {
   STICKERS:       { emoji: "🖼️", label: "Stickers" },
   "ANTI-NSFW":    { emoji: "🔞", label: "Anti-NSFW" },
   ADMINISTRACION: { emoji: "⚙️", label: "Administración" },
+  FICHAS:         { emoji: "📋", label: "Fichas" },
   MODERACION:     { emoji: "🛡️", label: "Moderación" },
   NIVELES:        { emoji: "📊", label: "Niveles" },
   UTILIDADES:     { emoji: "🔧", label: "Utilidades" },
