@@ -52,7 +52,12 @@ YouTube desconfía de las IPs de datacenter (Railway incluido) y pide sesión. E
 1. Reintenta la descarga con otros clientes del reproductor (`youtube:player_client=tv_simply,web_embedded`, luego `android_vr`). El chequeo no se aplica igual a todos.
 2. Si todos responden lo mismo, propaga el error y el plugin explica que hace falta cargar cookies.
 
-**Cookies**: `YTDLP_COOKIES_B64` con un `cookies.txt` en base64 (cuenta desechable, nunca la principal). `docker-entrypoint.sh` lo decodifica al volumen (`$AUTH_DIR/cookies.txt`, modo 600) y exporta `YTDLP_COOKIES` si no está definido, así sobrevive a los redeploys. Caducan cada semanas y hay que renovarlas.
+**Cookies**: cuenta desechable, nunca la principal. El entrypoint acepta dos variables y escribe siempre `$AUTH_DIR/cookies.txt` (modo 600, en el volumen, sobrevive a los redeploys):
+
+- `YTDLP_COOKIES_GZ_B64` — **recomendada**: `gzip -c cookies.txt | base64 -w0`. Una variable de Railway admite 32768 caracteres y un `cookies.txt` completo en base64 puede pasarse; comprimido cabe de sobra.
+- `YTDLP_COOKIES_B64` — `base64 -w0 cookies.txt`, solo si el archivo es pequeño.
+
+Si el valor no decodifica o el archivo no contiene cookies de `youtube.com`, se descarta y el log avisa. Las cookies caducan cada semanas y hay que renovarlas.
 
 **SoundCloud no sirve como respaldo**: sin sesión solo entrega 30 s de muestra (`hls_mp3_1_0_preview`) y algunos temas están protegidos con DRM. Se probó y se descartó.
 
@@ -81,5 +86,6 @@ YouTube desconfía de las IPs de datacenter (Railway incluido) y pide sesión. E
 [song] Error: <mensaje>
 [song] YouTube pidió verificación con "<cliente>"; probando otro cliente.
 [entrypoint] cookies de YouTube escritas en /app/bridge/auth/cookies.txt
+[entrypoint] YTDLP_COOKIES_GZ_B64 no se pudo descomprimir; se ignora.
 [entrypoint] YTDLP_COOKIES_B64 no se pudo decodificar; se ignora.
 ```
