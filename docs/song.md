@@ -41,7 +41,9 @@ usuario → !song <query>
 - **Descarga**: `yt-dlp --extract-audio --audio-format mp3 --audio-quality 5 --output -`
   - `ytsearch:` devuelve el primer resultado; las URLs directas deben ser **HTTPS de YouTube** (youtube.com, youtu.be, etc.)
   - `--audio-quality 5` (~192kbps VBR), tope 15MB
-  - `YTDLP_COOKIES` opcional para pasar cookies a yt-dlp
+  - Argumentos base: `-4 --no-warnings --retries 3 --socket-timeout 20`
+- **Versión**: el `Dockerfile` baja la **última** release de yt-dlp en cada build (`ARG YTDLP_VERSION=latest`; fija una fecha concreta si alguna rompe algo) e instala **Deno**, el runtime JS que YouTube exige para resolver challenges. Sin un runtime JS, yt-dlp avisa `No supported JavaScript runtime` y se pierden formatos
+- **Errores**: `describeYtDlpError()` traduce el stderr de yt-dlp (bot check, 403, video privado, timeout) a un mensaje corto para el grupo; el detalle crudo queda en `[song] Error:`
 
 ### Limitaciones
 
@@ -55,7 +57,11 @@ usuario → !song <query>
 | Variable | Default | Descripción |
 |----------|---------|-------------|
 | `YTDLP_PATH` | `yt-dlp` | Path al binario de yt-dlp |
-| `YTDLP_COOKIES` | — | Cookies opcionales para yt-dlp |
+| `YTDLP_COOKIES` | — | Ruta a un `cookies.txt` (formato Netscape) para `--cookies` |
+| `YTDLP_PROXY` | — | Proxy para `--proxy` (p. ej. residencial si la IP del hosting queda bloqueada) |
+| `YTDLP_EXTRACTOR_ARGS` | — | `--extractor-args`, p. ej. `youtube:player_client=tv_simply,web_embedded` |
+| `YTDLP_JS_RUNTIMES` | — | `--js-runtimes`, p. ej. `node:22` (Deno ya se usa por estar en PATH) |
+| `YTDLP_EXTRA_ARGS` | — | Argumentos extra sueltos (`--sleep-requests 1`, `--retries 5`, ...) |
 
 ## Logs
 

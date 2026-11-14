@@ -25,7 +25,7 @@
 - **`autoPromote`** (`shared/utils/autoPromote.js`): DI vía `deps = { creatorNumbers, isBotAdmin }`, se pasa desde `bootstrap.js` en `ready`
 - `minecraft` (wizard `!setserver` que **consume mensajes no-comando** vía `WIZARD_SESSIONS` en memoria), `bench` (`!bench` / `!bench stress`, corre todos los comandos con services mockeados)
 - **NSFW** (`infrastructure/nsfw/`): proveedores `disabled` (default) | `local` (HSV via sharp) | `gemini` | `openai` | `nvidia` (Nemotron via integrate.api.nvidia.com) | `sightengine` | `nudenet` | `custom` | `openrouter`. Remotos caen a `local` ante fallo. Cache en memoria (`NSFW_CACHE_TTL_MS`, default 10min)
-- **Song** (`commands/song/`, `infrastructure/youtube/downloader.js`): yt-dlp a mp3, busca por nombre o URL. **Solo HTTPS de YouTube**, tope 15MB, `YTDLP_COOKIES` opcional
+- **Song** (`commands/song/`, `infrastructure/youtube/downloader.js`): yt-dlp a mp3, busca por nombre o URL. **Solo HTTPS de YouTube**, tope 15MB. Ajustes por variables: `YTDLP_COOKIES`, `YTDLP_PROXY`, `YTDLP_EXTRACTOR_ARGS`, `YTDLP_JS_RUNTIMES`, `YTDLP_EXTRA_ARGS`. El Dockerfile instala la **última** release de yt-dlp (fijable con `--build-arg YTDLP_VERSION=...`) y **Deno** (runtime JS que YouTube exige; sin él se pierden formatos). Los errores de yt-dlp se traducen con `describeYtDlpError()`
 - **Stickers** (`infrastructure/stickers/processor.js`): sharp para estáticos (webp), ffmpeg para animados/gif (`fit: contain` + trim + padding transparente, tope 512KB). `getFfmpegCommand()` verifica con `fs.access(X_OK)` que el binario de `ffmpeg-static` exista —el Dockerfile instala con `--ignore-scripts` y el binario puede no descargarse— y si no, usa el `ffmpeg` del sistema. `exec` con timeout 90s; ante fallo el error SÍ sale en `[stickers]`
 - **Auth**: `AUTH_PATH = env("AUTH_DIR", "../bridge/auth")` se resuelve contra CWD. Local (CWD=`bot/`) → `bridge/auth` del repo; Docker (CWD=`/app/bot`) → `/app/bridge/auth`. Al hacer logout/forbidden borra la sesión y pide QR nuevo
 
@@ -67,7 +67,7 @@
 - `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.5-flash`; AI y provider NSFW gemini); `OPENROUTER_API_KEY`, `OPENAI_API_KEY`; `SIGHTENGINE_API_USER/SECRET`, `NUDENET_URL`, `NSFW_CUSTOM_URL`
 - `AI_PROVIDER` (`gemini`/`openai`), `AI_SYSTEM_PROMPT` (sobrescribe el prompt por defecto), `AI_COMMAND_CONFIRM_MS` (TTL de confirmación, default 90000)
 - Cadena de respaldo de la IA: `OPENROUTER_API_KEY` + `OPENROUTER_MODEL` (default `openrouter/auto`) y `NVIDIA_API_KEY` (si falta se reutiliza `NSFW_NVIDIA_API_KEY`) + `NVIDIA_MODEL` (default `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`). `AI_FALLBACK_TIMEOUT_MS` (default 60000) es el timeout de los tramos OpenAI-compatibles
-- `YTDLP_PATH` (default `yt-dlp`), `YTDLP_COOKIES`
+- `YTDLP_PATH` (default `yt-dlp`), `YTDLP_COOKIES`, `YTDLP_PROXY`, `YTDLP_EXTRACTOR_ARGS`, `YTDLP_JS_RUNTIMES`, `YTDLP_EXTRA_ARGS`
 - Lobby: `LOBBY_POLL_MS` (default 60000) = cada cuánto se repasan las solicitudes de entrada pendientes
 
 ## IA con ejecución de comandos
