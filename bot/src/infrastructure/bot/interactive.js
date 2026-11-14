@@ -5,7 +5,13 @@ import * as baileys from "@whiskeysockets/baileys";
 // `sock.sendMessage` NO entiende `sections`: `generateWAMessageContent` lo manda
 // a `prepareWAMessageMedia` y lanza "Invalid media type". El mensaje hay que
 // construirlo a mano como `interactiveMessage` con un botón `single_select` y
-// relayearlo. Esto es lo que hace este módulo.
+// relayearlo.
+//
+// IMPORTANTE: el `relayMessage` tiene que llevar el nodo binario
+// `<biz><interactive type="native_flow" v="1"><native_flow v="9" name="mixed"/></interactive></biz>`.
+// Sin `additionalNodes` WhatsApp acepta el mensaje (no da error) pero el cliente
+// NO pinta el botón ni el desplegable: llega vacío/ignorado. Ese era el motivo
+// de que la lista "no apareciera".
 //
 // `rows`: [{ rowId, title, description?, header? }]
 // El `rowId` es lo que llega de vuelta en
@@ -16,6 +22,24 @@ const MAX_ROW_TITLE = 24;
 // manda el menú en texto para no dejar al usuario esperando.
 const SEND_TIMEOUT_MS = 8000;
 
+const SEL = { type: "native_flow", v: "1" };
+const FLOW = { v: "9", name: "mixed" };
+
+// Nodos que hacen que WhatsApp renderice los botones nativos.
+const INTERACTIVE_NODES = [
+  {
+    tag: "biz",
+    attrs: {},
+    content: [
+      {
+        tag: "interactive",
+        attrs: { ...SEL },
+        content: [{ tag: "native_flow", attrs: { ...FLOW } }],
+      },
+    ],
+  },
+];
+
 function trimTitle(value, max = MAX_ROW_TITLE) {
   const text = String(value || "").trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -24,6 +48,7 @@ function trimTitle(value, max = MAX_ROW_TITLE) {
 function toSection(section) {
   return {
     title: trimTitle(section.title || "Opciones", 24),
+    highlight_label: "",
     rows: (section.rows || []).map((row) => ({
       header: row.header || "",
       title: trimTitle(row.title || row.rowId || ""),
@@ -39,10 +64,8 @@ function buildInteractive(payload) {
     : [{ title: payload.title || "Opciones", rows: payload.rows || [] }].map(toSection);
 
   const interactiveMessage = {
-    body: { text: String(payload.text || "") },
-    header: { title: "", hasMediaAttachment: false },
+    body: { text: String(payload.text || "").trim() || " " },
     nativeFlowMessage: {
-      messageVersion: 1,
       buttons: [
         {
           name: "single_select",
@@ -52,8 +75,19 @@ function buildInteractive(payload) {
           }),
         },
       ],
+      messageParamsJson: "",
     },
   };
+
+  if (payload.title) {
+    interactiveMessage.header = {
+      title: String(payload.title),
+      subtitle: "",
+      hasMediaAttachment: false,
+    };
+  } else {
+    interactiveMessage.header = { title: "", hasMediaAttachment: false };
+  }
 
   if (payload.footer) interactiveMessage.footer = { text: String(payload.footer) };
 
@@ -77,9 +111,8 @@ export function buildListMessage(jid, payload, options = {}) {
 
   const interactiveMessage = buildInteractive(payload);
 
-  // Se prefiere el `interactiveMessage` directo (es el que renderiza como
-  // "Ver opciones" en WhatsApp). El wrapper view-once queda como respaldo para
-  // versiones que exigen ese formato.
+  // Se prefiere el `interactiveMessage` directo. El wrapper view-once queda como
+  // respaldo para clientes/versiones que exigen ese formato.
   if (options.wrapped) {
     return generate(
       jid,
@@ -116,9 +149,14 @@ export async function sendListMessage(sock, jid, payload, options = {}) {
         wrapped,
       });
       await withTimeout(
-        sock.relayMessage(jid, message.message, { messageId: message.key.id }),
+        sock.relayMessage(jid, message.message, {
+          messageId: message.key.id,
+          // Sin esto WhatsApp no pinta el desplegable.
+          additionalNodes: INTERACTIVE_NODES,
+        }),
         options.timeoutMs || SEND_TIMEOUT_MS,
       );
+      console.log(`[interactive] lista enviada${wrapped ? " (viewOnce)" : ""}: ${message.key.id}`);
       return message;
     } catch (err) {
       lastError = err;

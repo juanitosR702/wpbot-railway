@@ -373,8 +373,9 @@ async function sendList(ctx, { text, footer, buttonText, rows }) {
     console.warn("[ficha] la lista interactiva falló, usando texto:", err?.message || err);
   }
 
-  const lines = rows.map((row, index) => `${index + 1}. ${row.title}`).join("\n");
-  return ctx.sendMessage({ text: `${text}\n\n${lines}\n\n_Responde con el número._` });
+  // El texto ya trae las opciones numeradas; solo se reenvía como mensaje
+  // normal para que el usuario nunca se quede sin ver el menú.
+  return ctx.sendMessage({ text });
 }
 
 // ---- Configuración ----
