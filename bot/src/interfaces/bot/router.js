@@ -69,7 +69,16 @@ export class Router {
     // Respuestas a listas/botones de WhatsApp (menús desplegables).
     const selection = this._extractSelection(msg.message);
 
-    if (!text && !mediaType && !selection) return null;
+    if (!text && !mediaType && !selection) {
+      // Diagnóstico: si WhatsApp manda una respuesta interactiva con otra forma
+      // (nombre de campo distinto), queda constancia en logs en vez de perderse.
+      const inner = this._unwrapMessage(msg.message) || {};
+      const keys = Object.keys(inner);
+      if (keys.some((key) => /interactive|listResponse|buttonsResponse|templateButton/i.test(key))) {
+        console.warn("[router] respuesta interactiva no reconocida:", keys.join(","), JSON.stringify(inner).slice(0, 400));
+      }
+      return null;
+    }
 
     const context = {
       phone,

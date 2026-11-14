@@ -175,6 +175,40 @@ test("ficha: avisa cuando no hay grupo de almacenamiento", async () => {
   assert.strictEqual(sent.length, 0);
 });
 
+test("ficha: la sesión sobrevive si WhatsApp cambia el JID del remitente", async () => {
+  const handler = await setup(fakeStore({ form: () => TWO_FIELDS }));
+  const { ctx, sent } = makeCtxWithSender(8);
+
+  await handler({ ...ctx, isCommand: true, command: "ficha" });
+  await handler({ ...ctx, text: "Ana" });
+
+  // El siguiente mensaje llega con otro JID (LID) y el teléfono en participantPn.
+  const switched = {
+    ...ctx,
+    sender: "99887766554433",
+    raw: {
+      key: {
+        participant: "99887766554433@lid",
+        participantPn: "57300000008@s.whatsapp.net",
+      },
+    },
+  };
+  await handler({ ...switched, selection: "f:o:1:0" });
+
+  assert.match(sent.at(-1).content.text, /Revisa tu ficha/);
+  assert.match(sent.at(-1).content.text, /País: Colombia/);
+});
+
+test("ficha: una lista vieja en un campo de texto repite la pregunta", async () => {
+  const handler = await setup(fakeStore({ form: () => TWO_FIELDS }));
+  const { ctx, sent } = makeCtxWithSender(9);
+
+  await handler({ ...ctx, isCommand: true, command: "ficha" });
+  await handler({ ...ctx, selection: "f:o:1:0" }); // selección de un paso que no toca
+
+  assert.match(sent.at(-1).content.text, /Nombre/);
+});
+
 test("ficha: !fichadestino guarda el JID completo del grupo", async () => {
   const saved = [];
   const handler = await setup(fakeStore({

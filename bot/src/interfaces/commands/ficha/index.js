@@ -19,8 +19,44 @@ import {
 const SESSION_TTL_MS = 20 * 60 * 1000;
 const sessions = new Map();
 
-function sessionKey(ctx) {
-  return `${ctx.sender}:${ctx.phone}`;
+// WhatsApp puede entregar al mismo remitente como teléfono (`@s.whatsapp.net`)
+// o como LID (`@lid`), y hasta cambiar entre mensajes. Se guarda la sesión bajo
+// todas las variantes para que no se pierda a mitad de la ficha: ese era el
+// motivo de que el flujo se quedara mudo en un paso.
+function senderIds(ctx) {
+  return [...new Set(
+    [
+      ctx.sender,
+      ctx.raw?.key?.participant,
+      ctx.raw?.key?.participantPn,
+      ctx.raw?.key?.participantLid,
+      ctx.raw?.key?.participantAlt,
+    ]
+      .filter(Boolean)
+      .map((id) => jidUser(id)),
+  )];
+}
+
+function findSession(ctx) {
+  for (const id of senderIds(ctx)) {
+    const session = sessions.get(`${id}:${ctx.phone}`);
+    if (session) return session;
+  }
+  return null;
+}
+
+function saveSession(ctx, session) {
+  const ids = senderIds(ctx);
+  if (!ids.length) ids.push(ctx.sender);
+  for (const id of ids) sessions.set(`${id}:${ctx.phone}`, session);
+}
+
+function dropSession(ctx, session) {
+  const target = session || findSession(ctx);
+  if (!target) return;
+  for (const [key, value] of sessions) {
+    if (value === target) sessions.delete(key);
+  }
 }
 
 function normalize(value) {
@@ -76,8 +112,7 @@ export const fichaPlugin = {
 async function startFicha(ctx, store) {
   if (!ctx.isGroup) return MSG.SOLO_GRUPOS;
 
-  const key = sessionKey(ctx);
-  if (sessions.has(key)) {
+  if (findSession(ctx)) {
     return "⚠️ Ya tienes una ficha en curso. Escribe *cancelar* para salir.";
   }
 
@@ -92,25 +127,29 @@ async function startFicha(ctx, store) {
   }
 
   const session = { phase: "fill", step: 0, values: {}, form, steps, editing: null, at: Date.now() };
-  sessions.set(key, session);
+  saveSession(ctx, session);
   return sendPrompt(ctx, session);
 }
 
 async function handleSession(ctx, store, options) {
-  const key = sessionKey(ctx);
-  const session = sessions.get(key);
+  const session = findSession(ctx);
   if (!session) return null;
 
   if (Date.now() - session.at > SESSION_TTL_MS) {
-    sessions.delete(key);
+    dropSession(ctx, session);
     return "⌛ La ficha caducó por inactividad. Empieza de nuevo con *!ficha*.";
   }
 
   const selection = String(ctx.selection || "");
   const text = String(ctx.text || "").trim();
 
+  console.log(
+    `[ficha] ${ctx.phone} fase=${session.phase} paso=${session.step} `
+    + `texto=${JSON.stringify(text.slice(0, 40))} seleccion=${selection || "-"}`,
+  );
+
   if (selection === "f:x" || /^(cancelar|cancel|salir)$/i.test(text)) {
-    sessions.delete(key);
+    dropSession(ctx, session);
     return "❌ Ficha cancelada.";
   }
 
@@ -142,7 +181,9 @@ async function handleFill(ctx, session, text, selection) {
     // se repite la pregunta en vez de guardar basura.
     if (value === null) return sendPrompt(ctx, session);
   } else {
-    if (!text) return null;
+    // Una selección que no corresponde a este paso (lista vieja) no debe
+    // dejar la ficha muda: se repite la pregunta.
+    if (!text) return sendPrompt(ctx, session);
     if (text.length > 400) return "⚠️ Respuesta demasiado larga (máximo 400 caracteres).";
     value = text;
   }
@@ -178,9 +219,15 @@ async function sendPrompt(ctx, session) {
   const progress = `${session.step + 1}/${session.steps.length}`;
 
   if (field.options?.length) {
+    // Las opciones van también en el texto: si WhatsApp no renderiza la lista
+    // (o el usuario no la ve), puede responder con el número.
+    const numbered = field.options
+      .map((option, index) => `${index + 1}. ${option}`)
+      .join("\n");
+
     await sendList(ctx, {
-      text: `📝 *Ficha (${progress})*\n\n${field.label}`,
-      footer: "Toca «Ver opciones» y elige. Escribe *cancelar* para salir.",
+      text: `📝 *Ficha (${progress})*\n\n${field.label}\n\n${numbered}`,
+      footer: "Toca «Ver opciones» o responde con el número. Escribe *cancelar* para salir.",
       buttonText: "Ver opciones",
       rows: field.options.map((option, index) => ({
         rowId: `f:o:${session.step}:${index}`,
@@ -203,11 +250,15 @@ async function sendPreview(ctx, session) {
     renderFicha(session.form, session.values),
     "",
     "¿La envío al grupo de almacenamiento?",
+    "",
+    "1. ✅ Enviar ficha",
+    "2. ✏️ Corregir un campo",
+    "3. ❌ Cancelar",
   ].join("\n");
 
   await sendList(ctx, {
     text: body,
-    footer: "Puedes corregir un campo antes de enviar.",
+    footer: "Toca un botón o responde con el número.",
     buttonText: "Elegir",
     rows: [
       { rowId: "f:s", title: "✅ Enviar ficha" },
@@ -220,22 +271,29 @@ async function sendPreview(ctx, session) {
 
 async function handlePreview(ctx, store, session, text, selection) {
   const word = normalize(text);
+  const pick = selection === "f:s" || word === "1"
+    ? "send"
+    : selection === "f:e" || word === "2"
+      ? "edit"
+      : selection === "f:x" || word === "3"
+        ? "cancel"
+        : null;
 
-  if (selection === "f:s" || /^(enviar|si|confirmar|listo|ok)$/.test(word)) {
+  if (pick === "send" || (!pick && /^(enviar|si|confirmar|listo|ok)$/.test(word))) {
     return submitFicha(ctx, store, session);
   }
 
-  if (selection === "f:e" || /^(corregir|editar|cambiar)$/.test(word)) {
+  if (pick === "edit" || (!pick && /^(corregir|editar|cambiar)$/.test(word))) {
     session.phase = "edit";
     return sendEditPicker(ctx, session);
   }
 
-  if (selection === "f:x") {
-    sessions.delete(sessionKey(ctx));
+  if (pick === "cancel" || selection === "f:x") {
+    dropSession(ctx, session);
     return "❌ Ficha cancelada.";
   }
 
-  return "Elige una opción del menú: *enviar*, *corregir* o *cancelar*.";
+  return "Elige una opción: *1* enviar, *2* corregir o *3* cancelar.";
 }
 
 async function sendEditPicker(ctx, session) {
@@ -296,7 +354,7 @@ async function submitFicha(ctx, store, session) {
     return "⚠️ No pude enviar la ficha al grupo de almacenamiento. Avisa a un admin.";
   }
 
-  sessions.delete(sessionKey(ctx));
+  dropSession(ctx, session);
   return "✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!";
 }
 
@@ -356,16 +414,17 @@ async function configure(ctx, store, options) {
     return "♻️ Ficha reiniciada a la predeterminada.";
   }
 
-  if (sessions.has(sessionKey(ctx))) {
+  if (findSession(ctx)) {
     return "⚠️ Ya tienes una configuración en curso. Escribe *cancelar* para salir.";
   }
 
-  sessions.set(sessionKey(ctx), {
+  const session = {
     phase: "config",
     step: 0,
     data: { header: "", fields: [], footer: "" },
     at: Date.now(),
-  });
+  };
+  saveSession(ctx, session);
 
   return [
     "⚙️ *Configurar ficha* (1/3)",
@@ -425,7 +484,7 @@ async function handleConfigAnswer(ctx, store, session, text) {
   };
   store.setForm(ctx.phone, form, ctx.sender);
   await store.save();
-  sessions.delete(sessionKey(ctx));
+  dropSession(ctx, session);
 
   return [
     "✅ *Ficha guardada para este grupo.*",
