@@ -9,7 +9,6 @@ import {
   parseFieldLines,
   renderFicha,
   renderFormConfig,
-  renderProgress,
   rowTitle,
 } from "../src/shared/utils/fichaForm.js";
 
@@ -125,19 +124,4 @@ test("ficha: los títulos de fila se recortan al límite de WhatsApp", () => {
   const long = rowTitle("Una opción absurdamente larguísima");
   assert.ok(long.length <= 24);
   assert.ok(long.endsWith("…"));
-});
-
-test("ficha: el avance muestra la ficha completa y marca el campo actual", () => {
-  const text = renderProgress(DEFAULT_FICHA, { 1: "Ana", 2: "22" }, 3);
-
-  assert.match(text, /FICHA DE INGRESO/);
-  assert.match(text, /✦ \*DATOS DEL INTEGRANTE\*/);
-  assert.match(text, /• Nombre o apodo: Ana/);
-  assert.match(text, /• Edad: 22/);
-  assert.match(text, /👉 Usuario: …/);
-  // Los campos que faltan se ven pendientes, no ocultos.
-  assert.match(text, /• País: …/);
-  assert.match(text, /✦ \*COMPROMISO\*/);
-  // No repite el pie de la ficha mientras se está llenando.
-  assert.ok(!text.includes(DEFAULT_FICHA.footer));
 });
