@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import * as baileys from "@whiskeysockets/baileys";
 
 // Listas desplegables (menú de una sola selección) para Baileys v6.
@@ -7,11 +8,11 @@ import * as baileys from "@whiskeysockets/baileys";
 // construirlo a mano como `interactiveMessage` con un botón `single_select` y
 // relayearlo.
 //
-// IMPORTANTE: el `relayMessage` tiene que llevar el nodo binario
-// `<biz><interactive type="native_flow" v="1"><native_flow v="9" name="mixed"/></interactive></biz>`.
-// Sin `additionalNodes` WhatsApp acepta el mensaje (no da error) pero el cliente
-// NO pinta el botón ni el desplegable: llega vacío/ignorado. Ese era el motivo
-// de que la lista "no apareciera".
+// Dos detalles que WhatsApp exige para que el cliente PINTE el desplegable (si
+// faltan, el servidor acepta el mensaje sin error pero el usuario no ve nada):
+//   1. `messageContextInfo.messageSecret` (32 bytes aleatorios) en el mensaje.
+//   2. `additionalNodes` en el relay: <biz><interactive type="native_flow"
+//      v="1"><native_flow v="9" name="mixed"/></interactive></biz>.
 //
 // `rows`: [{ rowId, title, description?, header? }]
 // El `rowId` es lo que llega de vuelta en
@@ -22,9 +23,6 @@ const MAX_ROW_TITLE = 24;
 // manda el menú en texto para no dejar al usuario esperando.
 const SEND_TIMEOUT_MS = 8000;
 
-const SEL = { type: "native_flow", v: "1" };
-const FLOW = { v: "9", name: "mixed" };
-
 // Nodos que hacen que WhatsApp renderice los botones nativos.
 const INTERACTIVE_NODES = [
   {
@@ -33,8 +31,8 @@ const INTERACTIVE_NODES = [
     content: [
       {
         tag: "interactive",
-        attrs: { ...SEL },
-        content: [{ tag: "native_flow", attrs: { ...FLOW } }],
+        attrs: { type: "native_flow", v: "1" },
+        content: [{ tag: "native_flow", attrs: { v: "9", name: "mixed" } }],
       },
     ],
   },
@@ -79,14 +77,14 @@ function buildInteractive(payload) {
     },
   };
 
+  // El encabezado solo se agrega si hay título: un header con título vacío es
+  // rechazado/ignorado por el cliente.
   if (payload.title) {
     interactiveMessage.header = {
       title: String(payload.title),
       subtitle: "",
       hasMediaAttachment: false,
     };
-  } else {
-    interactiveMessage.header = { title: "", hasMediaAttachment: false };
   }
 
   if (payload.footer) interactiveMessage.footer = { text: String(payload.footer) };
@@ -111,9 +109,8 @@ export function buildListMessage(jid, payload, options = {}) {
 
   const interactiveMessage = buildInteractive(payload);
 
-  // Se prefiere el `interactiveMessage` directo. El wrapper view-once queda como
-  // respaldo para clientes/versiones que exigen ese formato.
   if (options.wrapped) {
+    // Respaldo para clientes que exigen el envoltorio view-once.
     return generate(
       jid,
       {
@@ -122,6 +119,7 @@ export function buildListMessage(jid, payload, options = {}) {
             messageContextInfo: {
               deviceListMetadata: {},
               deviceListMetadataVersion: 2,
+              messageSecret: randomBytes(32),
             },
             interactiveMessage,
           },
@@ -131,7 +129,13 @@ export function buildListMessage(jid, payload, options = {}) {
     );
   }
 
-  return generate(jid, { interactiveMessage }, { userJid: options.userJid });
+  // `messageSecret` es obligatorio para que WhatsApp muestre los botones
+  // nativos; sin él el mensaje se acepta pero no se renderiza.
+  return generate(
+    jid,
+    { messageContextInfo: { messageSecret: randomBytes(32) }, interactiveMessage },
+    { userJid: options.userJid },
+  );
 }
 
 /**
@@ -151,7 +155,7 @@ export async function sendListMessage(sock, jid, payload, options = {}) {
       await withTimeout(
         sock.relayMessage(jid, message.message, {
           messageId: message.key.id,
-          // Sin esto WhatsApp no pinta el desplegable.
+          // Sin estos nodos WhatsApp no pinta el desplegable.
           additionalNodes: INTERACTIVE_NODES,
         }),
         options.timeoutMs || SEND_TIMEOUT_MS,
