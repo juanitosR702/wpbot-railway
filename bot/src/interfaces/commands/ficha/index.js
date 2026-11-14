@@ -11,6 +11,7 @@ import {
   renderFicha,
   renderFormConfig,
   rowTitle,
+  validateFichaValues,
 } from "../../../shared/utils/fichaForm.js";
 
 // Sesiones en memoria: cada persona llena su ficha en su propio chat/grupo.
@@ -158,7 +159,7 @@ async function handleSession(ctx, store, options) {
   if (session.phase === "config") return handleConfigAnswer(ctx, store, session, text);
   if (session.phase === "fill") return handleFill(ctx, session, text, selection);
   if (session.phase === "edit") return handleEditPick(ctx, session, text, selection);
-  if (session.phase === "preview") return handlePreview(ctx, store, session, text, selection);
+  if (session.phase === "preview") return handlePreview(ctx, store, session, text, selection, options);
   return null;
 }
 
@@ -269,7 +270,7 @@ async function sendPreview(ctx, session) {
   return HALT;
 }
 
-async function handlePreview(ctx, store, session, text, selection) {
+async function handlePreview(ctx, store, session, text, selection, options = {}) {
   const word = normalize(text);
   const pick = selection === "f:s" || word === "1"
     ? "send"
@@ -280,7 +281,7 @@ async function handlePreview(ctx, store, session, text, selection) {
         : null;
 
   if (pick === "send" || (!pick && /^(enviar|si|confirmar|listo|ok)$/.test(word))) {
-    return submitFicha(ctx, store, session);
+    return submitFicha(ctx, store, session, options);
   }
 
   if (pick === "edit" || (!pick && /^(corregir|editar|cambiar)$/.test(word))) {
@@ -333,7 +334,22 @@ async function handleEditPick(ctx, session, text, selection) {
   return sendPrompt(ctx, session);
 }
 
-async function submitFicha(ctx, store, session) {
+async function submitFicha(ctx, store, session, options = {}) {
+  // Revisión final: si algo llegó mal (edad fuera de rango, un "No" en las
+  // reglas, un texto vacío) se vuelve a preguntar solo ese campo en vez de
+  // mandar una ficha incompleta al grupo de almacenamiento.
+  const validation = validateFichaValues(session.form, session.values);
+  if (!validation.ok) {
+    session.phase = "fill";
+    session.step = validation.firstIndex ?? 0;
+    session.editing = null;
+    await ctx.sendMessage({
+      text: ["⚠️ *Revisa tu ficha:*", "", ...validation.errors.map((error) => `• ${error.message}`)].join("\n"),
+    });
+    await sendPrompt(ctx, session);
+    return HALT;
+  }
+
   const destination = store.destination();
   if (!destination) {
     return "⚠️ No hay grupo de almacenamiento configurado. Un admin debe ejecutar *!fichadestino* en ese grupo.";
@@ -355,7 +371,19 @@ async function submitFicha(ctx, store, session) {
   }
 
   dropSession(ctx, session);
-  return "✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!";
+
+  // Gancho del lobby: marca a la persona como fichada y le manda el link del
+  // grupo general por privado. Devuelve el texto que se añade a la respuesta.
+  let extra = "";
+  try {
+    extra = (await options.onSubmitted?.(ctx, { store, session })) || "";
+  } catch (err) {
+    console.warn("[ficha] error en el gancho onSubmitted:", err?.message || err);
+  }
+
+  return ["✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!", extra]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 // ---- Listas interactivas con respaldo a texto ----

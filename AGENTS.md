@@ -68,6 +68,7 @@
 - `AI_PROVIDER` (`gemini`/`openai`), `AI_SYSTEM_PROMPT` (sobrescribe el prompt por defecto), `AI_COMMAND_CONFIRM_MS` (TTL de confirmación, default 90000)
 - Cadena de respaldo de la IA: `OPENROUTER_API_KEY` + `OPENROUTER_MODEL` (default `openrouter/auto`) y `NVIDIA_API_KEY` (si falta se reutiliza `NSFW_NVIDIA_API_KEY`) + `NVIDIA_MODEL` (default `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`). `AI_FALLBACK_TIMEOUT_MS` (default 60000) es el timeout de los tramos OpenAI-compatibles
 - `YTDLP_PATH` (default `yt-dlp`), `YTDLP_COOKIES`
+- Lobby: `LOBBY_POLL_MS` (default 60000) = cada cuánto se repasan las solicitudes de entrada pendientes
 
 ## IA con ejecución de comandos
 - El plugin `ai` responde con el comando explícito `!ai` / `!ia` / `!ask` **y cuando mencionan al bot con `@` en el texto** (`contextInfo.mentionedJid` + token `@<numero>`). Responder a un mensaje del bot **no** lo activa: solo alimenta el historial (`buscar_persona`) y las confirmaciones. Puede **ejecutar comandos reales** en lenguaje natural. No inventa lógica: `commandRunner.js` reinyecta un mensaje sintético con `__aiSynthetic` en el `Router`, así que aplican todas las validaciones existentes (admin, bot admin, protegidos, creador, etc.). El handler de IA ignora esos mensajes para no recursar.
@@ -83,7 +84,7 @@
 ## Control por grupo (apagado y módulos)
 - `group_settings` (`GroupSettingsStore`, singleton `getGroupSettingsStore()`): por grupo `{ botEnabled, disabledModules[] }`.
 - `!bot on|off` (admin) apaga el bot **entero** en ese grupo: no responde a nada, ni comandos ni IA, y tampoco manda bienvenidas/despedidas.
-- `!modulo on|off <modulo>` (admin) desactiva plugins concretos: `economia`, `casino`, `niveles`, `stickers`, `tiktok`, `ia`, `moderacion`, `antinsfw`, `encuestas`, `musica`, `imagen`, `minecraft`, `utilidades`, `ayuda`, `administracion`. Acepta clave, nombre de plugin o etiqueta (`economia`/`economy`/`Economía`).
+- `!modulo on|off <modulo>` (admin) desactiva plugins concretos: `economia`, `casino`, `niveles`, `stickers`, `tiktok`, `ia`, `moderacion`, `antinsfw`, `encuestas`, `musica`, `imagen`, `minecraft`, `utilidades`, `ayuda`, `administracion`, `fichas`, `lobby`. Acepta clave, nombre de plugin o etiqueta (`economia`/`economy`/`Economía`).
 - `!modulos` manda un **menú numerado con ✅/❌** (módulos + `Bienvenidas y despedidas`). El usuario responde **citando ese mensaje** con los números (`2` o `2 5`) y se alternan; también `!modulo 2`. Solo se aceptan respuestas que citen el mensaje del menú (guardado en memoria con TTL 10 min) para que un número suelto en el chat no cambie nada.
 - `Router.setGroupGate(fn)` se inyecta en `bootstrap.js`: `null` = sin restricciones, `{ disabled }` = apagado total, `{ allows(plugin) }` filtra handlers por `meta.plugin`. `GROUP_CONFIG_COMMANDS` (`!bot`, `!modulo`, `!modulos`) siempre pasan para poder reactivar aunque el bot esté apagado.
 
@@ -104,9 +105,23 @@
 - `ctx.selection` convive con `ctx.text` (vacío en las respuestas de lista).
 
 
+## Lobby automático (plugin `lobby` + `shared/utils/lobbyFlow.js`)
+- Configuración (admin del grupo o creador): `!lobby ver`, `!lobby on|off`, `!lobby aqui lobby`, `!lobby aqui general`, `!lobby demora <segundos>`, `!lobby reset`. Cada grupo se registra desde dentro con `!lobby aqui ...` (no hay que copiar JIDs).
+- Estado en Mongo (`lobby`, `LobbyStore`): `{ enabled, lobbyJid, generalJid, welcomeDelayMs, generalCode, generalCodeAt, greeted{}, submitted{} }`.
+- Flujo: `group.join-request` en el lobby → `groupRequestParticipantsUpdate(..., "approve")`. Al `add` en el lobby espera `welcomeDelayMs` (5 s por defecto), **relee metadata** y saluda con mención; luego reinyecta un `!ficha` sintético al router, así que aplican las mismas validaciones y desplegables que el comando real.
+- Al enviarse la ficha en el lobby, el gancho `onSubmitted` del plugin `fichas` marca `submitted` y manda el link del general **por privado**; si el DM falla, lo dice en la respuesta pública.
+- `group.join-request` en general: con ficha (o si está exento) aprueba; sin ficha → `"reject"` + DM explicando el motivo. Al `add` en general expulsa del lobby (`remove`) y restablece el link (`groupRevokeInvite`, cooldown 15 s) para que el usado no sirva a nadie más.
+- Exentos del flujo (ni saludo, ni ficha, ni link, ni expulsión; sus solicitudes se aprueban sin filtro): dueño (`CREATOR_NUMBERS`), `BOT_NUMBERS`/`BOT_LIDS`, `!protegidos` y admins del lobby o del general. Se recalculan con metadata fresca en cada paso.
+- Solicitudes que llegan con el bot dormido: se repasan al `ready` y cada `LOBBY_POLL_MS` con `groupRequestParticipantsList`.
+- Requisitos de WhatsApp: el bot debe ser admin en ambos grupos y ambos con “aprobar nuevos miembros”. Sin lobby/general configurados el flujo no hace nada; `!lobby ver` muestra el estado y si el bot es admin.
+- Validación de la ficha antes de enviarla (`validateFichaValues`): campos llenos, opciones válidas, edad entre 13 y 99 y “Sí” en los campos de aceptación (reglas/compromiso). Si algo falla se re-pregunta solo ese campo.
+- Logs: `[lobby] solicitud aprobada ...`, `[lobby] solicitud rechazada en general (sin ficha) ...`, `[lobby] expulsado del lobby por entrar a general ...`, `[lobby] link del general restablecido`.
+
+
 ## Console logs
 - `[cmd] <command> (<n> args) — <phone> (<sender>) en grupo "<name>" (<id>)`
 - `[anti_nsfw] <group>: <mediaType> → <provider> score=<s> nsfw=<b>`
 - `[nsfw] <Provider> falló, usando local:`, `[stickers] ... outputSize=`, `[stickers] Error creando sticker:`
 - `[router] Error en <plugin>:`, `[song] Error:`, `[monitor] RAM ... | CPU ... | uptime ...`, `[view-once] Reenviado: <id>`, `[bot] QR recibido. Disponible en el visor privado.`
+- `[lobby] solicitud aprobada/rechazada ...`, `[lobby] expulsado del lobby ...`, `[lobby] link del general restablecido ...`, `[lobby] no pude ...`
 - `src/index.js`: duplica console.log/warn a `logs/bot.log` (resuelve `logs/` del CWD con fallback a `/tmp`; Dockerfile pre-crea `/app/bot/logs`), filtra ruido de sesión Baileys, monitor cada 10s. View-once se reenvía automáticamente

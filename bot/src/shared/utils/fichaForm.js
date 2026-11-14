@@ -207,6 +207,79 @@ export function formatFichaDate(date = new Date()) {
   }
 }
 
+function normalizeValue(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
+// Campos tipo "¿Aceptas las reglas?" o "compromiso": no vale responder que no.
+function isAcceptanceField(label) {
+  return /acept|reglas|compromiso|acuerdo/i.test(String(label || ""));
+}
+
+/**
+ * Validación de la ficha completa antes de enviarla al grupo de almacenamiento.
+ *
+ * El llenado ya restringe las opciones, pero esto cubre lo que sí puede llegar
+ * mal: edad fuera de rango, textos vacíos/cortos y un "No" en los campos de
+ * aceptación. Devuelve los errores con el índice real del campo para volver a
+ * preguntar solo esos.
+ */
+export function validateFichaValues(form, values = {}) {
+  const errors = [];
+
+  (form?.fields || []).forEach((field, index) => {
+    if (!field?.label) return;
+    const label = field.label;
+    const raw = values[index];
+    const value = raw === undefined || raw === null ? "" : String(raw).trim();
+
+    if (!value) {
+      errors.push({ index, message: `«${label}» no puede quedar vacío.` });
+      return;
+    }
+
+    if (field.options?.length) {
+      const match = field.options.find((option) => option === value)
+        || field.options.find((option) => normalizeValue(option) === normalizeValue(value));
+      if (!match) {
+        errors.push({ index, message: `«${label}» debe ser una de las opciones.` });
+        return;
+      }
+      if (isAcceptanceField(label) && normalizeValue(match).startsWith("no")) {
+        errors.push({ index, message: `«${label}» debe responderse que sí para continuar.` });
+      }
+      return;
+    }
+
+    // La edad se revisa antes que el largo mínimo: "9" es un valor de un solo
+    // carácter y el mensaje útil es el del rango, no "demasiado corto".
+    if (/edad/i.test(label)) {
+      const age = Number(value.replace(/[^\d]/g, ""));
+      if (!Number.isFinite(age) || age < 13 || age > 99) {
+        errors.push({ index, message: `«${label}» debe ser un número entre 13 y 99.` });
+      }
+      return;
+    }
+    if (value.length < 2) {
+      errors.push({ index, message: `«${label}» es demasiado corto.` });
+      return;
+    }
+    if (value.length > 400) {
+      errors.push({ index, message: `«${label}» pasa de 400 caracteres.` });
+    }
+  });
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    firstIndex: errors.length ? errors[0].index : null,
+  };
+}
+
 /** Recorta títulos de fila al límite de WhatsApp. */
 export function rowTitle(value, max = 24) {
   const text = String(value || "").trim();
