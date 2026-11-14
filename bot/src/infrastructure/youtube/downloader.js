@@ -12,6 +12,15 @@ const COMMAND_TIMEOUT_MS = 120_000;
 const BASE_ARGS = ["-4", "--no-warnings", "--retries", "3", "--socket-timeout", "20"];
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
 
+// Cuando YouTube bloquea la IP del hosting responde "Sign in to confirm you're
+// not a bot". Antes de rendirse se prueban otros clientes del reproductor: el
+// chequeo no se aplica igual a todos.
+const BOT_CHECK_PATTERN = /sign in to confirm|not a bot|confirm you.re not a bot|bot.?check/i;
+const CLIENT_VARIANTS = [
+  "youtube:player_client=tv_simply,web_embedded",
+  "youtube:player_client=android_vr",
+];
+
 /** Divide una cadena de argumentos respetando comillas simples y dobles. */
 function splitArgs(value) {
   const args = [];
@@ -23,11 +32,26 @@ function splitArgs(value) {
   return args;
 }
 
+/** true si el error de yt-dlp es el chequeo anti-bot de YouTube (bloqueo por IP). */
+export function isBotCheck(err) {
+  return BOT_CHECK_PATTERN.test(`${err?.stderr || ""} ${err?.message || ""}`);
+}
+
+/** Clientes a probar, en orden: el configurado primero y luego los de respaldo. */
+export function extractorVariants(configured = YTDLP_EXTRACTOR_ARGS) {
+  const variants = [];
+  if (configured) variants.push(configured);
+  for (const variant of CLIENT_VARIANTS) {
+    if (!variants.includes(variant)) variants.push(variant);
+  }
+  return variants;
+}
+
 /** Traduce el error crudo de yt-dlp a algo que un usuario de WhatsApp entienda. */
 export function describeYtDlpError(err) {
   const raw = `${err?.stderr || ""} ${err?.message || ""}`.toLowerCase();
   if (/sign in to confirm|not a bot|bot.?check|confirm you.re not a bot/.test(raw)) {
-    return "YouTube está pidiendo verificación de bot para esta conexión. Intenta con otra canción o más tarde.";
+    return "YouTube está pidiendo verificación de bot para la conexión del servidor. Si eres admin del bot, carga las cookies de YouTube (YTDLP_COOKIES_B64); si no, intenta más tarde.";
   }
   if (/private video|members-only|join this channel|age.?restricted|confirm your age/.test(raw)) {
     return "Ese video es privado o está restringido por edad.";
@@ -43,6 +67,9 @@ export function describeYtDlpError(err) {
   }
   if (/timed out|timeout|killed/.test(raw)) {
     return "La descarga tardó demasiado y la cancelé.";
+  }
+  if (/maxbuffer|enobufs/.test(raw)) {
+    return "El audio es demasiado largo para enviarlo por WhatsApp.";
   }
   if (/video unavailable|not available in your country/.test(raw)) {
     return "Ese video no está disponible.";
@@ -64,17 +91,18 @@ function assertYouTubeUrl(value) {
 }
 
 export class YouTubeDownloader {
-  _authArgs() {
+  _authArgs(extractorArgs) {
     const args = [];
     if (YTDLP_COOKIES) args.push("--cookies", YTDLP_COOKIES);
     if (YTDLP_PROXY) args.push("--proxy", YTDLP_PROXY);
-    if (YTDLP_EXTRACTOR_ARGS) args.push("--extractor-args", YTDLP_EXTRACTOR_ARGS);
+    const extractor = extractorArgs === undefined ? YTDLP_EXTRACTOR_ARGS : extractorArgs;
+    if (extractor) args.push("--extractor-args", extractor);
     if (YTDLP_JS_RUNTIMES) args.push("--js-runtimes", YTDLP_JS_RUNTIMES);
     return args;
   }
 
-  _baseArgs() {
-    return [...this._authArgs(), ...BASE_ARGS, ...splitArgs(YTDLP_EXTRA_ARGS)];
+  _baseArgs(extractorArgs) {
+    return [...this._authArgs(extractorArgs), ...BASE_ARGS, ...splitArgs(YTDLP_EXTRA_ARGS)];
   }
 
   _exec(args, options = {}) {
@@ -132,9 +160,9 @@ export class YouTubeDownloader {
     return { value: result.url, searchResult: result };
   }
 
-  async _downloadAudio(url) {
+  async _downloadAudio(url, extractorArgs) {
     const { stdout } = await this._exec([
-      ...this._baseArgs(),
+      ...this._baseArgs(extractorArgs),
       "--no-playlist",
       "--extract-audio",
       "--audio-format", "mp3",
@@ -149,9 +177,23 @@ export class YouTubeDownloader {
     return buffer;
   }
 
+  async _downloadYouTube(url) {
+    let lastError = null;
+    for (const variant of extractorVariants()) {
+      try {
+        return await this._downloadAudio(url, variant);
+      } catch (err) {
+        lastError = err;
+        if (!isBotCheck(err)) throw err;
+        console.warn(`[song] YouTube pidió verificación con "${variant}"; probando otro cliente.`);
+      }
+    }
+    throw lastError;
+  }
+
   async searchAndDownload(input) {
-    const resolved = await this.resolve(input);
-    const buffer = await this._downloadAudio(resolved.value);
+    const resolved = await this.resolve(String(input || "").trim());
+    const buffer = await this._downloadYouTube(resolved.value);
     return {
       buffer,
       title: resolved.searchResult?.title || "audio",

@@ -45,12 +45,23 @@ usuario → !song <query>
 - **Versión**: el `Dockerfile` baja la **última** release de yt-dlp en cada build (`ARG YTDLP_VERSION=latest`; fija una fecha concreta si alguna rompe algo) e instala **Deno**, el runtime JS que YouTube exige para resolver challenges. Sin un runtime JS, yt-dlp avisa `No supported JavaScript runtime` y se pierden formatos
 - **Errores**: `describeYtDlpError()` traduce el stderr de yt-dlp (bot check, 403, video privado, timeout) a un mensaje corto para el grupo; el detalle crudo queda en `[song] Error:`
 
+### Bloqueo por IP (`Sign in to confirm you're not a bot`)
+
+YouTube desconfía de las IPs de datacenter (Railway incluido) y pide sesión. El downloader no se rinde al primer fallo:
+
+1. Reintenta la descarga con otros clientes del reproductor (`youtube:player_client=tv_simply,web_embedded`, luego `android_vr`). El chequeo no se aplica igual a todos.
+2. Si todos responden lo mismo, propaga el error y el plugin explica que hace falta cargar cookies.
+
+**Cookies**: `YTDLP_COOKIES_B64` con un `cookies.txt` en base64 (cuenta desechable, nunca la principal). `docker-entrypoint.sh` lo decodifica al volumen (`$AUTH_DIR/cookies.txt`, modo 600) y exporta `YTDLP_COOKIES` si no está definido, así sobrevive a los redeploys. Caducan cada semanas y hay que renovarlas.
+
+**SoundCloud no sirve como respaldo**: sin sesión solo entrega 30 s de muestra (`hls_mp3_1_0_preview`) y algunos temas están protegidos con DRM. Se probó y se descartó.
+
 ### Limitaciones
 
-- Tamaño máximo: 15MB (límite de WhatsApp)
-- Duración máxima: ~30min en MP3
+- Tamaño máximo: 15MB (límite de WhatsApp); un audio mayor corta en `stdout maxBuffer length exceeded`
+- Duración máxima: ~10min a 192kbps
 - Sin búsqueda persistente: siempre descarga el primer resultado
-- Solo HTTPS de YouTube: URLs directas de otras fuentes se rechazan
+- Enlaces directos: solo HTTPS de YouTube. SoundCloud se usa como respaldo de búsquedas, no como enlace de entrada
 
 ## Env vars
 
@@ -58,6 +69,7 @@ usuario → !song <query>
 |----------|---------|-------------|
 | `YTDLP_PATH` | `yt-dlp` | Path al binario de yt-dlp |
 | `YTDLP_COOKIES` | — | Ruta a un `cookies.txt` (formato Netscape) para `--cookies` |
+| `YTDLP_COOKIES_B64` | — | El mismo `cookies.txt` en base64; el entrypoint lo escribe en el volumen y apunta `YTDLP_COOKIES` |
 | `YTDLP_PROXY` | — | Proxy para `--proxy` (p. ej. residencial si la IP del hosting queda bloqueada) |
 | `YTDLP_EXTRACTOR_ARGS` | — | `--extractor-args`, p. ej. `youtube:player_client=tv_simply,web_embedded` |
 | `YTDLP_JS_RUNTIMES` | — | `--js-runtimes`, p. ej. `node:22` (Deno ya se usa por estar en PATH) |
@@ -67,4 +79,7 @@ usuario → !song <query>
 
 ```
 [song] Error: <mensaje>
+[song] YouTube pidió verificación con "<cliente>"; probando otro cliente.
+[entrypoint] cookies de YouTube escritas en /app/bridge/auth/cookies.txt
+[entrypoint] YTDLP_COOKIES_B64 no se pudo decodificar; se ignora.
 ```
