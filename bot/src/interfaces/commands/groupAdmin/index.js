@@ -507,6 +507,16 @@ export async function handleGroupParticipantsUpdate(update, services = {}, optio
   const action = update.action;
   if (action !== "add" && action !== "remove") return;
 
+  // El flujo de ingreso saluda con retraso (para que el mensaje sí se vea);
+  // en ese caso este saludo se omite para no duplicarlo.
+  if (action === "add" && typeof options.skipWelcome === "function") {
+    try {
+      if (await options.skipWelcome(update)) return;
+    } catch {
+      // Si la comprobación falla, se saluda igual: mejor duplicar que callar.
+    }
+  }
+
   let metadata = null;
   try {
     metadata = await services.getGroupMetadata?.(update.id);
@@ -525,6 +535,17 @@ export async function handleGroupParticipantsUpdate(update, services = {}, optio
     });
     await services.sendMessage?.(update.id, { text, mentions: [participant] });
   }
+}
+
+/**
+ * Plantilla de bienvenida configurada en el grupo ("" si no tiene).
+ * La usa el flujo de ingreso para saludar con el mismo texto del grupo.
+ */
+export async function groupWelcomeTemplate(jid) {
+  const { store } = getStore();
+  await store.ready();
+  const group = store.group(cleanJid(jid));
+  return group.welcome ? group.welcomeText || "" : "";
 }
 
 export const groupAdminPlugin = {

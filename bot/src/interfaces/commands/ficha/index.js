@@ -1,6 +1,12 @@
 import { HALT } from "../../bot/router.js";
 import { MSG } from "../../../shared/messages.js";
-import { jidUser, findParticipant, isAdminParticipant } from "../../../shared/utils/jid.js";
+import {
+  cleanJid,
+  jidUser,
+  findParticipant,
+  isAdminParticipant,
+  participantIds,
+} from "../../../shared/utils/jid.js";
 import {
   DEFAULT_FICHA,
   FICHA_PRESETS,
@@ -71,6 +77,18 @@ function isOmit(text) {
   return ["omitir", "skip", "no", "-", "ninguno"].includes(normalize(text));
 }
 
+// Carga diferida: el store importa Mongo, así el plugin se puede testear (o
+// cargar) sin base de datos inyectando `store` (plugin o auto-inicio).
+let storePromise = null;
+async function resolveStore(injected) {
+  if (injected) return injected;
+  if (!storePromise) {
+    storePromise = import("../../../infrastructure/storage/fichaStore.js")
+      .then(({ getFichaStore }) => getFichaStore());
+  }
+  return storePromise;
+}
+
 export const fichaPlugin = {
   name: "fichas",
   version: "1.0.0",
@@ -78,20 +96,8 @@ export const fichaPlugin = {
   register(api, options = {}) {
     const ownerPolicy = options.ownerPolicy;
 
-    // Carga diferida: el store importa Mongo, así el plugin se puede testear
-    // (o cargar) sin base de datos inyectando `options.store`.
-    let storePromise = null;
-    async function getStore() {
-      if (options.store) return options.store;
-      if (!storePromise) {
-        storePromise = import("../../../infrastructure/storage/fichaStore.js")
-          .then(({ getFichaStore }) => getFichaStore());
-      }
-      return storePromise;
-    }
-
     api.register(async (ctx) => {
-      const store = await getStore();
+      const store = await resolveStore(options.store);
       if (typeof store.ready === "function") await store.ready().catch(() => {});
 
       if (!ctx.isCommand) return handleSession(ctx, store, options);
@@ -131,6 +137,83 @@ async function startFicha(ctx, store) {
   return sendPrompt(ctx, session);
 }
 
+/**
+ * Inicia la ficha sin que la persona escriba `!ficha` (flujo de ingreso).
+ * Recibe los datos del evento de grupo y fabrica el mismo contexto que arma el
+ * router, para reutilizar el flujo tal cual (mismas sesiones y desplegables).
+ *
+ * Devuelve `{ started, reason }`: `started` es true cuando ya se envió la
+ * primera pregunta; si no se pudo, `reason` explica por qué (se registra en el
+ * log del bot, no se manda al grupo para no hacer ruido).
+ */
+export async function autoStartFicha(deps = {}) {
+  const {
+    groupJid,
+    participant,
+    sendMessage,
+    sendList,
+    getGroupMetadata,
+    services = {},
+    store: injectedStore,
+  } = deps;
+
+  if (!groupJid || !participant) return { started: false, reason: "faltan groupJid/participant" };
+
+  const store = await resolveStore(injectedStore);
+  if (typeof store.ready === "function") await store.ready().catch(() => {});
+
+  // El evento de grupo puede traer solo el LID (o solo el teléfono). Se buscan
+  // todas las variantes en la metadata para que la sesión se encuentre cuando
+  // la persona responda, aunque WhatsApp cambie de identificador a mitad.
+  let metadata = null;
+  try {
+    metadata = (await getGroupMetadata?.(groupJid)) || null;
+  } catch {
+    metadata = null;
+  }
+  const found = findParticipant(metadata, [participant]);
+  const ids = found ? participantIds(found) : [participant];
+  const phoneJid = ids.find((id) => String(id).endsWith("@s.whatsapp.net")) || null;
+  const lidJid = ids.find((id) => String(id).endsWith("@lid")) || null;
+
+  const ctx = {
+    isGroup: true,
+    isCommand: false,
+    command: null,
+    args: [],
+    commandBody: "",
+    text: "",
+    selection: null,
+    phone: cleanJid(groupJid),
+    sender: cleanJid(participant),
+    name: "",
+    raw: {
+      key: {
+        participant,
+        participantPn: phoneJid,
+        participantLid: lidJid,
+      },
+    },
+    sendMessage: (content) => sendMessage?.(groupJid, content),
+    sendList: (payload) => {
+      if (!sendList) throw new Error("sendList no disponible");
+      return sendList(groupJid, payload);
+    },
+    getGroupMetadata: async () => getGroupMetadata?.(groupJid) ?? null,
+    services: {
+      ...services,
+      sendMessage: (jid, content) => sendMessage?.(jid, content),
+    },
+  };
+
+  const reply = await startFicha(ctx, store);
+  if (reply && reply !== HALT) {
+    console.warn(`[ficha] no se pudo iniciar automáticamente en ${cleanJid(groupJid)}: ${reply}`);
+    return { started: false, reason: reply };
+  }
+  return { started: true };
+}
+
 async function handleSession(ctx, store, options) {
   const session = findSession(ctx);
   if (!session) return null;
@@ -158,7 +241,7 @@ async function handleSession(ctx, store, options) {
   if (session.phase === "config") return handleConfigAnswer(ctx, store, session, text);
   if (session.phase === "fill") return handleFill(ctx, session, text, selection);
   if (session.phase === "edit") return handleEditPick(ctx, session, text, selection);
-  if (session.phase === "preview") return handlePreview(ctx, store, session, text, selection);
+  if (session.phase === "preview") return handlePreview(ctx, store, session, text, selection, options);
   return null;
 }
 
@@ -269,7 +352,7 @@ async function sendPreview(ctx, session) {
   return HALT;
 }
 
-async function handlePreview(ctx, store, session, text, selection) {
+async function handlePreview(ctx, store, session, text, selection, options = {}) {
   const word = normalize(text);
   const pick = selection === "f:s" || word === "1"
     ? "send"
@@ -280,7 +363,7 @@ async function handlePreview(ctx, store, session, text, selection) {
         : null;
 
   if (pick === "send" || (!pick && /^(enviar|si|confirmar|listo|ok)$/.test(word))) {
-    return submitFicha(ctx, store, session);
+    return submitFicha(ctx, store, session, options);
   }
 
   if (pick === "edit" || (!pick && /^(corregir|editar|cambiar)$/.test(word))) {
@@ -333,19 +416,29 @@ async function handleEditPick(ctx, session, text, selection) {
   return sendPrompt(ctx, session);
 }
 
-async function submitFicha(ctx, store, session) {
+async function submitFicha(ctx, store, session, options = {}) {
   const destination = store.destination();
   if (!destination) {
     return "⚠️ No hay grupo de almacenamiento configurado. Un admin debe ejecutar *!fichadestino* en ese grupo.";
   }
 
+  // Filtros del Lobby: se revisan antes de avisar del grupo general.
+  const lobby = await lobbyIngreso(ctx, session, options);
+  const rejected = Boolean(lobby && lobby.verdict && lobby.verdict.ok === false);
+
   const metadata = await safeGroupMetadata(ctx);
-  const text = renderFicha(session.form, session.values, {
+  let text = renderFicha(session.form, session.values, {
     senderNumber: jidUser(ctx.sender),
     senderName: ctx.name && ctx.name !== ctx.sender ? ctx.name : "",
     groupName: metadata?.subject || "",
     date: formatFichaDate(),
   });
+
+  // En el almacén los admins ven por qué no pasó (la persona no está ahí).
+  if (rejected) {
+    const reasons = (lobby.verdict.reasons || []).join(", ") || "revisión";
+    text += `\n\n🚫 _No cumple los filtros: ${reasons}_`;
+  }
 
   try {
     await ctx.services.sendMessage(destination, { text, mentions: [ctx.sender] });
@@ -355,7 +448,70 @@ async function submitFicha(ctx, store, session) {
   }
 
   dropSession(ctx, session);
-  return "✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!";
+
+  if (!lobby) return "✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!";
+
+  if (rejected) {
+    console.log(
+      `[ingreso] rechazo ${ctx.sender}: ${(lobby.verdict.reasons || []).join(",") || "-"}`,
+    );
+    return lobby.verdict.excuse || "⏳ *Solicitud en revisión*\n\nEl grupo general está completo por ahora. Te avisamos por aquí cuando haya cupo.";
+  }
+
+  return [
+    "✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!",
+    lobby.link,
+  ].filter(Boolean).join("\n\n");
+}
+
+/**
+ * Si la ficha se llenó en el Lobby con el ingreso activo, devuelve el veredicto
+ * de los filtros y el texto con el enlace del grupo general.
+ */
+async function lobbyIngreso(ctx, session, options = {}) {
+  const ingreso = options.ingreso;
+  if (!ingreso?.getConfig) return null;
+
+  let config = null;
+  try {
+    config = await ingreso.getConfig();
+  } catch {
+    return null;
+  }
+
+  if (!config?.enabled || !config.general) return null;
+  if (cleanJid(config.lobby) !== cleanJid(ctx.phone)) return null;
+
+  let verdict = { ok: true, reasons: [], warnings: [], excuse: "" };
+  if (typeof ingreso.review === "function") {
+    try {
+      verdict = { ...verdict, ...(await ingreso.review(session.form, session.values, ctx)) };
+    } catch (err) {
+      // Si la revisión falla, se deja pasar: un error interno no debe bloquear.
+      console.warn("[ingreso] no se pudo revisar la ficha:", err?.message || err);
+    }
+  }
+
+  let link = "";
+  if (verdict.ok !== false) {
+    try {
+      link = (await ingreso.inviteLink?.(`${cleanJid(config.general)}@g.us`)) || "";
+    } catch (err) {
+      console.warn("[ficha] no se pudo obtener el enlace del grupo general:", err?.message || err);
+    }
+  }
+
+  const text = verdict.ok === false ? "" : [
+    "🚪 *Siguiente paso: el grupo general*",
+    "",
+    link
+      ? `Solicita unirte aquí:\n${link}`
+      : "Pide a un admin el enlace del grupo general.",
+    "",
+    "Cuando te acepten allí, te sacaré de este Lobby automáticamente.",
+  ].join("\n");
+
+  return { config, verdict, link: text };
 }
 
 // ---- Listas interactivas con respaldo a texto ----

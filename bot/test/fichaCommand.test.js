@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 
-import { fichaPlugin } from "../src/interfaces/commands/ficha/index.js";
+import { fichaPlugin, autoStartFicha } from "../src/interfaces/commands/ficha/index.js";
 import { HALT } from "../src/interfaces/bot/router.js";
 
 const ORIGIN = "120363000000000001@g.us";
@@ -20,10 +20,10 @@ function fakeStore(overrides = {}) {
   };
 }
 
-async function setup(store = fakeStore()) {
+async function setup(store = fakeStore(), options = {}) {
   let handler = null;
   const api = { register: (fn) => { handler = fn; }, getCommands: () => [], prefix: "!" };
-  fichaPlugin.register(api, { store, ownerPolicy: { isCreatorJid: () => false } });
+  fichaPlugin.register(api, { store, ownerPolicy: { isCreatorJid: () => false }, ...options });
   assert.ok(handler, "el plugin debe registrar un handler");
   return handler;
 }
@@ -245,4 +245,144 @@ test("ficha: !fichadestino acepta un JID explícito", async () => {
   await handler(ctx);
 
   assert.deepStrictEqual(saved, ["120363000000000555@g.us"]);
+});
+
+test("ficha: al terminar en el Lobby manda el enlace del grupo general", async () => {
+  const links = [];
+  const handler = await setup(fakeStore({ form: () => TWO_FIELDS }), {
+    ingreso: {
+      getConfig: async () => ({
+        enabled: true,
+        lobby: "120363000000000001",
+        general: "120363000000000777",
+        delayMs: 15000,
+      }),
+      inviteLink: async (jid) => {
+        links.push(jid);
+        return "https://chat.whatsapp.com/ABC123";
+      },
+    },
+  });
+  const { ctx } = makeCtxWithSender(10);
+
+  await handler({ ...ctx, isCommand: true, command: "ficha" });
+  await handler({ ...ctx, text: "Ana" });
+  await handler({ ...ctx, selection: "f:o:1:0" });
+  const done = await handler({ ...ctx, selection: "f:s" });
+
+  assert.match(done, /Ficha enviada/);
+  assert.match(done, /grupo general/);
+  assert.match(done, /chat\.whatsapp\.com\/ABC123/);
+  assert.match(done, /Lobby/);
+  assert.deepStrictEqual(links, ["120363000000000777@g.us"]);
+});
+
+test("ficha: sin ingreso activo no menciona el grupo general", async () => {
+  const handler = await setup(fakeStore({ form: () => TWO_FIELDS }), {
+    ingreso: { getConfig: async () => ({ enabled: false }) },
+  });
+  const { ctx } = makeCtxWithSender(11);
+
+  await handler({ ...ctx, isCommand: true, command: "ficha" });
+  await handler({ ...ctx, text: "Ana" });
+  await handler({ ...ctx, selection: "f:o:1:0" });
+  const done = await handler({ ...ctx, selection: "f:s" });
+
+  assert.match(done, /Ficha enviada/);
+  assert.ok(!done.includes("grupo general"));
+});
+
+test("ficha: el ingreso automático arranca la ficha en el grupo", async () => {
+  const sent = [];
+  const participant = "573009990001@s.whatsapp.net";
+
+  const result = await autoStartFicha({
+    groupJid: ORIGIN,
+    participant,
+    store: fakeStore({ form: () => TWO_FIELDS }),
+    sendMessage: async (jid, content) => sent.push({ jid, content }),
+    getGroupMetadata: async () => ({ subject: "Lobby", participants: [{ id: participant }] }),
+  });
+
+  assert.deepStrictEqual(result, { started: true });
+  assert.strictEqual(sent[0].jid, ORIGIN);
+  assert.match(sent[0].content.text, /Nombre/);
+  assert.strictEqual(sent.length, 1);
+});
+
+test("ficha: la sesión del auto-inicio se reconoce cuando la persona responde", async () => {
+  const store = fakeStore({ form: () => TWO_FIELDS });
+  const participant = "573009990002@s.whatsapp.net";
+
+  await autoStartFicha({
+    groupJid: ORIGIN,
+    participant,
+    store,
+    sendMessage: async () => {},
+    getGroupMetadata: async () => null,
+  });
+
+  const handler = await setup(store);
+  const { ctx, sent } = makeCtx({
+    phone: "120363000000000001",
+    sender: "573009990002",
+    raw: { key: { participant } },
+  });
+
+  await handler({ ...ctx, text: "Ana" });
+
+  assert.match(sent.at(-1).content.text, /País/);
+});
+
+test("ficha: el auto-inicio no escribe en el grupo si falta el almacén", async () => {
+  const sent = [];
+
+  const result = await autoStartFicha({
+    groupJid: ORIGIN,
+    participant: "573009990003@s.whatsapp.net",
+    store: fakeStore({ destination: () => "" }),
+    sendMessage: async (jid, content) => sent.push({ jid, content }),
+  });
+
+  assert.strictEqual(result.started, false);
+  assert.match(result.reason, /!fichadestino/);
+  assert.strictEqual(sent.length, 0);
+});
+
+test("ficha: si no cumple los filtros recibe una excusa, no el enlace", async () => {
+  const links = [];
+  const handler = await setup(fakeStore({ form: () => TWO_FIELDS }), {
+    ingreso: {
+      getConfig: async () => ({
+        enabled: true,
+        lobby: "120363000000000001",
+        general: "120363000000000777",
+      }),
+      inviteLink: async (jid) => {
+        links.push(jid);
+        return "https://chat.whatsapp.com/ABC123";
+      },
+      review: async () => ({
+        ok: false,
+        reasons: ["edad"],
+        warnings: [],
+        excuse: "⏳ El grupo general está completo por ahora.",
+      }),
+    },
+  });
+  const { ctx, sent } = makeCtxWithSender(12);
+
+  await handler({ ...ctx, isCommand: true, command: "ficha" });
+  await handler({ ...ctx, text: "Ana" });
+  await handler({ ...ctx, selection: "f:o:1:0" });
+  const done = await handler({ ...ctx, selection: "f:s" });
+
+  assert.match(done, /completo por ahora/);
+  assert.ok(!done.includes("chat.whatsapp.com"), "no debe dar el enlace");
+  assert.deepStrictEqual(links, []);
+
+  // El almacén sí recibe la ficha, marcada para los admins.
+  const delivery = sent.at(-1);
+  assert.strictEqual(delivery.jid, DESTINATION);
+  assert.match(delivery.content.text, /No cumple los filtros: edad/);
 });

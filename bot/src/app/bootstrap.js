@@ -21,8 +21,13 @@ import { AntiNsfwStore } from "../infrastructure/storage/antiNsfwStore.js";
 import { aiPlugin } from "../interfaces/commands/ai/index.js";
 import { casinoPlugin } from "../interfaces/commands/casino/index.js";
 import { economyPlugin } from "../interfaces/commands/economy/index.js";
-import { groupAdminPlugin, handleGroupParticipantsUpdate } from "../interfaces/commands/groupAdmin/index.js";
-import { fichaPlugin } from "../interfaces/commands/ficha/index.js";
+import { groupAdminPlugin, handleGroupParticipantsUpdate, groupWelcomeTemplate } from "../interfaces/commands/groupAdmin/index.js";
+import { fichaPlugin, autoStartFicha } from "../interfaces/commands/ficha/index.js";
+import { ingresoPlugin } from "../interfaces/commands/ingreso/index.js";
+import { defaultWelcomeText, groupIdOf, onJoinRequest, onParticipantsUpdate } from "../shared/utils/autoIngreso.js";
+import { pickExcuse, reviewFicha } from "../shared/utils/ingresoFilters.js";
+import { renderWelcomeTemplate } from "../shared/utils/welcomeTemplate.js";
+import { getIngresoStore } from "../infrastructure/storage/ingresoStore.js";
 import { helpPlugin } from "../interfaces/commands/help/index.js";
 import { levelsPlugin } from "../interfaces/commands/levels/index.js";
 import { moderationPlugin } from "../interfaces/commands/moderation/index.js";
@@ -291,9 +296,90 @@ const coreCommandsPlugin = {
   },
 };
 
+// ---- Ingreso automático (Lobby -> General) ----
+//
+// Configuración en Mongo (`ingreso_settings`): lobby, general, delayMs, enabled.
+// Se lee en cada evento para que `!ingreso on|off|delay` aplique al instante.
+const ingresoStore = getIngresoStore();
+
+async function ingresoConfig() {
+  try {
+    await ingresoStore.ready();
+  } catch (err) {
+    console.warn("[ingreso] sin Mongo, flujo desactivado:", err?.message || err);
+  }
+  return ingresoStore.config();
+}
+
+async function groupInviteLink(groupJid) {
+  try {
+    const code = await connection.sock?.groupInviteCode(groupJid);
+    return code ? `https://chat.whatsapp.com/${code}` : "";
+  } catch (err) {
+    console.warn("[ingreso] no se pudo obtener el enlace del grupo:", err?.message || err);
+    return "";
+  }
+}
+
+// Saca a alguien del Lobby. Best-effort: si ya no está, WhatsApp lo rechaza y
+// no hay nada que arreglar.
+async function removeFromLobby(participant) {
+  const config = await ingresoConfig();
+  if (!config.lobby || !connection.sock) return;
+  try {
+    await connection.sock.groupParticipantsUpdate(`${config.lobby}@g.us`, [participant], "remove");
+    console.log(`[ingreso] fuera del Lobby: ${participant}`);
+  } catch (err) {
+    console.warn("[ingreso] no pude sacar del Lobby a", participant, "-", err?.message || err);
+  }
+}
+
+// Saludo con retraso: usa la plantilla del grupo (`!setwelcome`) si existe.
+async function sendLobbyWelcome(groupJid, participant) {
+  let metadata = null;
+  try {
+    metadata = await connection.sock?.groupMetadata(groupJid);
+  } catch {
+    metadata = null;
+  }
+  const template = await groupWelcomeTemplate(groupJid);
+  const vars = {
+    user: `@${String(participant).split("@")[0].split(":")[0]}`,
+    group: metadata?.subject || "el grupo",
+    count: metadata?.participants?.length,
+  };
+  const text = template
+    ? renderWelcomeTemplate(template, vars)
+    : defaultWelcomeText({ participant, groupName: metadata?.subject });
+  await connection.sendMessage(groupJid, { text, mentions: [participant] });
+}
+
+let wiredIngresoSock = null;
+
 router.registerPlugin(coreCommandsPlugin);
 router.registerPlugin(groupAdminPlugin, { ownerPolicy });
-router.registerPlugin(fichaPlugin, { ownerPolicy });
+router.registerPlugin(fichaPlugin, {
+  ownerPolicy,
+  ingreso: {
+    getConfig: ingresoConfig,
+    inviteLink: groupInviteLink,
+    // Filtros de la ficha (edad, país, iniciales). Si no cumple, la persona
+    // recibe una excusa creíble en vez del enlace del grupo general.
+    review: async (form, values, ctx) => {
+      const config = await ingresoConfig();
+      const verdict = reviewFicha(form, values, config);
+      if (verdict.warnings.length) {
+        console.warn("[ingreso] aviso de filtros:", verdict.warnings.join(" | "));
+      }
+      return { ...verdict, excuse: pickExcuse(config.excuse, ctx?.sender || "") };
+    },
+  },
+});
+router.registerPlugin(ingresoPlugin, {
+  ownerPolicy,
+  store: ingresoStore,
+  inviteLink: groupInviteLink,
+});
 router.registerPlugin(ownerPlugin, { ownerPolicy, ownerRepository });
 router.registerPlugin(aiPlugin, { ownerRepository, ownerPolicy, router });
 router.registerPlugin(antiNsfwPlugin, { ownerPolicy });
@@ -380,6 +466,12 @@ connection.on("ready", async (user) => {
     handleGroupParticipantsUpdate(update, {
       sendMessage: (jid, content) => connection.sendMessage(jid, content),
       getGroupMetadata: (jid) => connection.sock?.groupMetadata(jid),
+    }, {
+      // En el Lobby el saludo lo manda el ingreso automático, ya con retraso.
+      skipWelcome: async () => {
+        const config = await ingresoConfig();
+        return config.enabled && update.action === "add" && groupIdOf(update.id) === config.lobby;
+      },
     }).catch((err) => console.error("[group_admin] Error en welcome/bye:", err));
   });
 
@@ -407,6 +499,46 @@ connection.on("ready", async (user) => {
     creatorNumbers: () => ownerRepository.creatorNumbers(),
     isBotAdmin: (getGroupMetadata, botJid, botLid) => ownerPolicy.isBotAdmin(getGroupMetadata, botJid, botLid),
   }).catch((err) => console.error("[autoPromote] Error en escaneo inicial:", err));
+
+  // Ingreso automático: se engancha una sola vez por socket (Baileys crea uno
+  // nuevo en cada reconexión, así que hay que volver a engancharlo).
+  if (wiredIngresoSock !== connection.sock) {
+    const sock = connection.sock;
+    wiredIngresoSock = sock;
+
+    sock?.ev?.on("group.join-request", (update) => {
+      ingresoConfig()
+        .then((config) => onJoinRequest(update, {
+          config,
+          approve: (jid, participant, action) =>
+            sock.groupRequestParticipantsUpdate(jid, [participant], action),
+          removeFromLobby,
+          logger: console,
+        }))
+        .catch((err) => console.error("[ingreso] Error en solicitud de unión:", err?.message || err));
+    });
+
+    sock?.ev?.on("group-participants.update", (update) => {
+      ingresoConfig()
+        .then((config) => onParticipantsUpdate(update, {
+          config,
+          welcome: (jid, participant) => sendLobbyWelcome(jid, participant),
+          startFicha: (jid, participant) => autoStartFicha({
+            groupJid: jid,
+            participant,
+            sendMessage: (target, content) => sock.sendMessage(target, content),
+            sendList: (target, payload) => connection.sendList(target, payload),
+            getGroupMetadata: (target) => sock.groupMetadata(target),
+            services: { sendMessage: (target, content) => sock.sendMessage(target, content) },
+          }),
+          removeFromLobby,
+          logger: console,
+        }))
+        .catch((err) => console.error("[ingreso] Error en evento de grupo:", err?.message || err));
+    });
+
+    console.log("[ingreso] flujo automático enganchado al socket.");
+  }
 });
 
 connection.on("message", async (msg) => {

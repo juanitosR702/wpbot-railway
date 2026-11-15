@@ -104,8 +104,20 @@
 - `ctx.selection` convive con `ctx.text` (vacío en las respuestas de lista).
 
 
+## Ingreso automático (plugin `ingreso`)
+- Config global en Mongo (`ingreso_settings`, `IngresoStore`): `{ lobby, general, delayMs: 15000, enabled, minAge, countries[], initials[], excuse }`. Los JID se guardan **sin sufijo** (`cleanJid`) porque se comparan con `ctx.phone`.
+- Configuración (admin del grupo o creador): `!ingreso lobby` (se ejecuta **en el Lobby**), `!ingreso general` (en el grupo final), `!ingreso delay 15`, `!ingreso link`, `!ingreso on|off|ver|reset`.
+- Flujo: `group.join-request` (`action: created`) aprueba solo las solicitudes del Lobby **y** del General; `group-participants.update` (`action: add`) en el Lobby espera `delayMs`, saluda y arranca la ficha con `autoStartFicha` (contexto sintético equivalente al del router). Al entrar en General (por aprobación del bot o añadido por un admin) se expulsa del Lobby con `groupParticipantsUpdate(..., "remove")` best-effort.
+- El bot debe ser **admin en Lobby y General** y ambos grupos deben tener activada la aprobación de entrada; si no, WhatsApp no manda `group.join-request` ni deja aprobar/expulsar.
+- `handleGroupParticipantsUpdate` acepta `options.skipWelcome(update)`: en el Lobby el saludo lo manda el ingreso (con retraso) y `group_admin` lo omite para no duplicar. La plantilla sale de `!setwelcome` (`groupWelcomeTemplate`) o del texto por defecto de `autoIngreso.defaultWelcomeText`.
+- Al terminar la ficha en el Lobby, `submitFicha` responde con el enlace del General (`groupInviteCode`) y avisa de que se le sacará del Lobby.
+- **Filtros** (`shared/utils/ingresoFilters.js`, configurados con `!ingreso edad 18`, `!ingreso paises Colombia, México`, `!ingreso iniciales A M`): se evalúan sobre la ficha terminada, solo en el Lobby. Edad = primer número del campo `Edad` (ilegible ⇒ rechazo); país = comparación normalizada por contención; iniciales = primera letra de cada palabra del campo `Nombre` (basta una coincidencia). Un filtro activo sin su campo en la ficha **no** bloquea: deja un `[ingreso] aviso de filtros:` en el log.
+- Si no cumple: la ficha **sí** se guarda en el almacén con la nota `🚫 _No cumple los filtros: …_` (solo la ven los admins) y la persona recibe una **excusa creíble** (`pickExcuse`, estable por remitente; `!ingreso excusa <texto>` para personalizarla, `reset` para las de fábrica) en vez del enlace. Log `[ingreso] rechazo <sender>: <motivos>`.
+- `autoStartFicha` (exportado por `ficha`) registra la sesión bajo `participant`, `participantPn` y `participantLid` sacados de la metadata, para que la ficha siga aunque WhatsApp cambie de JID. Si no hay almacén o ya hay sesión, devuelve `{ started: false, reason }` y solo lo registra en el log (no escribe en el grupo).
+
 ## Console logs
 - `[cmd] <command> (<n> args) — <phone> (<sender>) en grupo "<name>" (<id>)`
+- `[ingreso] solicitud aprobada en Lobby|General`, `[ingreso] fuera del Lobby: <participant>`, `[ingreso] rechazo <sender>: <motivos>`, `[ingreso] aviso de filtros: ...`, `[ingreso] flujo automático enganchado al socket.`
 - `[anti_nsfw] <group>: <mediaType> → <provider> score=<s> nsfw=<b>`
 - `[nsfw] <Provider> falló, usando local:`, `[stickers] ... outputSize=`, `[stickers] Error creando sticker:`
 - `[router] Error en <plugin>:`, `[song] Error:`, `[monitor] RAM ... | CPU ... | uptime ...`, `[view-once] Reenviado: <id>`, `[bot] QR recibido. Disponible en el visor privado.`
