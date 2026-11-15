@@ -63,7 +63,23 @@ const INFO = {
 
   // ---- Fichas de ingreso ----
   ficha: { desc: "Rellena la ficha de ingreso del grupo paso a paso (menú desplegable)", level: U, keywords: ["ficha", "formulario", "ingreso", "registro", "unirme", "solicitud"], groupOnly: true },
-  setficha: { desc: "Configura la ficha del grupo: encabezado, campos y pie", usage: "!setficha [dragon|ver|reset]", level: A, keywords: ["configurar ficha", "campos ficha", "crear ficha", "ghost dragons"], groupOnly: true, destructive: true },
+  setficha: {
+    desc: "Configura la ficha de ingreso del grupo. Con `importar` se pega la ficha completa de una vez (marcadores ENCABEZADO:, CAMPOS, PIE:; dentro, '# SECCION', 'Campo | op1, op2', 'Campo')",
+    usage: "!setficha importar <ficha> | !setficha ver | !setficha dragon | !setficha reset",
+    level: A,
+    keywords: ["configurar ficha", "pegar ficha", "cargar ficha", "crear formulario", "formulario de admisión", "preguntas de ingreso", "ghost dragons"],
+    groupOnly: true,
+    destructive: true,
+    multiline: true,
+    maxChars: 2000,
+  },
+  lobby: {
+    desc: "Configura el flujo lobby→general y sus filtros de admisión en una sola orden: edad mínima, países permitidos, iniciales del nombre y excusa cuando no cumple",
+    usage: "!lobby filtros edad=18; paises=Colombia, México; iniciales=A M; excusa=Estamos llenos  |  !lobby ver | on | off | aqui lobby | aqui general | demora <s>",
+    level: A,
+    keywords: ["lobby", "admisión", "admission", "filtros", "edad mínima", "solo mayores", "países permitidos", "iniciales", "excusa", "cupo lleno", "grupo general"],
+    groupOnly: true,
+  },
   fichadestino: { desc: "Marca este grupo (o un JID) como almacén de fichas", usage: "!fichadestino [off|ver]", level: A, keywords: ["grupo fichas", "almacen fichas", "destino fichas"], groupOnly: true, destructive: true },
   tagall: { desc: "Menciona a todos los participantes", level: A, keywords: ["menciona a todos", "tag all", "avisa a todos"] },
   hidetag: { desc: "Menciona a todos sin mostrar el listado", level: A, keywords: ["menciona invisible", "hidetag"] },
@@ -197,6 +213,8 @@ export function createCommandCatalog(router) {
       destructive: Boolean(info.destructive),
       needsTarget: Boolean(info.needsTarget),
       groupOnly: Boolean(info.groupOnly),
+      multiline: Boolean(info.multiline),
+      maxChars: Number(info.maxChars) || 0,
     });
   }
 

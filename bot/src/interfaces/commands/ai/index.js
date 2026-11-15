@@ -81,13 +81,16 @@ function promptFromMention(ctx, ownerRepository) {
   const ids = new Set(botIds(ctx, ownerRepository).map((id) => jidUser(id)).filter(Boolean));
   return String(ctx.text || "")
     .replace(/@(\d{5,})/g, (match, digits) => (ids.has(digits) ? " " : match))
-    .replace(/\s+/g, " ")
+    // Se conservan los saltos de línea: si pegan una ficha entera, la IA debe
+    // ver un campo por línea.
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
 function promptFrom(ctx) {
-  const text = (ctx.args || []).join(" ").trim();
-  return text.replace(/\s+/g, " ");
+  const text = String(ctx.commandBody || "").trim() || (ctx.args || []).join(" ");
+  return text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function trimPrompt(prompt, maxChars) {
@@ -188,11 +191,17 @@ function prunePending() {
 }
 
 function confirmationText(entry, args, ttlMs) {
-  const command = `!${entry.name}${args.length ? ` ${args.join(" ")}` : ""}`;
+  const raw = args.join(" ");
+  // Con texto libre (fichas) no tiene sentido repetir todo: basta el comando,
+  // la primera línea y cuántas trae.
+  const preview = entry.multiline && raw.length > 120
+    ? `${String(args[0] || "").split("\n")[0]} … (${raw.split("\n").length} líneas)`
+    : truncate(raw, 120);
+  const command = `!${entry.name}${args.length ? ` ${preview}` : ""}`;
   const seconds = Math.round(ttlMs / 1000);
   return [
     "⚠️ *Confirmación requerida*",
-    `Voy a ejecutar: *${truncate(command, 120)}*`,
+    `Voy a ejecutar: *${command}*`,
     `Responde *sí* para confirmarlo o *no* para cancelar. Caduca en ${seconds} s.`,
   ].join("\n");
 }
@@ -259,7 +268,7 @@ function toolDefinitions() {
           argumentos: {
             type: "string",
             description:
-              "Argumentos separados por espacios. Para objetivos usa el JID que devuelve buscar_persona, una mencion o un numero.",
+              "Argumentos del comando. Normalmente separados por espacios; para objetivos usa el JID que devuelve buscar_persona, una mencion o un numero. Si el comando trabaja con texto libre (ej. setficha importar), manda el texto completo con saltos de línea reales.",
           },
         },
         required: ["nombre"],
@@ -281,17 +290,27 @@ function buildSystemPrompt(config, catalog) {
     "- Los comandos destructivos piden confirmacion automaticamente: no la pidas tu, solo llama a la funcion.",
     "- Si el comando ya respondio por su cuenta, responde exactamente: NADA",
     "- Si el usuario solo conversa, responde breve y no ejecutes nada.",
+    "- Si te pega una ficha de admisión (lista de preguntas, encabezado, secciones) y te dice qué filtros quiere, configúralo tú:",
+    "  1) ejecutar_comando setficha con argumentos \"importar\\n<ficha normalizada>\" (la ficha empieza en la línea siguiente a 'importar');",
+    "  2) ejecutar_comando lobby con argumentos \"filtros edad=<n>; paises=<lista>; iniciales=<letras>; excusa=<texto>\" (solo lo que pidió).",
+    "- Normaliza la ficha así: la primera línea es el título, luego 'CAMPOS', después los campos y al final 'PIE: <despedida>'; dentro de CAMPOS usa '# SECCION' para secciones, 'Campo | opción 1, opción 2' para desplegables y 'Campo' para texto libre.",
+    "- No inventes campos: respeta las preguntas de la ficha que te pegaron, aunque cambies el orden o quites adornos.",
+    "- Si no te pegan la ficha pero te dicen qué preguntar, redacta tú campos razonables (nombre, edad, país, actividad, reglas) con ese mismo formato y ejecuta igual.",
+    "- Si la persona no dijo un filtro, no lo inventes: deja solo los que pidió.",
     "",
     "Comandos disponibles:",
     catalog.compactIndex(),
   ].join("\n");
 }
 
-function splitArgs(value) {
+function splitArgs(value, entry = null) {
   if (Array.isArray(value)) return value.map((item) => String(item));
-  return String(value || "")
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  // Texto libre (fichas pegadas): se manda tal cual, con sus saltos de línea.
+  if (entry?.multiline) return [raw];
+  return raw
     .replace(/[\r\n]+/g, " ")
-    .trim()
     .split(/\s+/)
     .filter(Boolean);
 }
@@ -359,7 +378,7 @@ function createToolExecutor({ ctx, store, catalog, runner }) {
       return { response: { ok: false, error: denied, denegado: true } };
     }
 
-    const argList = splitArgs(args?.argumentos);
+    const argList = splitArgs(args?.argumentos, entry);
     if (entry.needsTarget && !runner.hasTarget(ctx, argList)) {
       return {
         response: {

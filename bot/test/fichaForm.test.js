@@ -7,6 +7,7 @@ import {
   MAX_LIST_OPTIONS,
   formSteps,
   parseFieldLines,
+  parseFichaText,
   renderFicha,
   renderFormConfig,
   rowTitle,

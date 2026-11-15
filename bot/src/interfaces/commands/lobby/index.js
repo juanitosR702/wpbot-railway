@@ -62,6 +62,129 @@ function splitList(text) {
     .filter(Boolean);
 }
 
+// "A M", "A,M" o "AM" → ["a", "m"]
+function lettersOf(value) {
+  return [...new Set(
+    splitList(value)
+      .join(" ")
+      .split(/[^\p{L}]+/u)
+      .join("")
+      .toLowerCase()
+      .split(""),
+  )].filter(Boolean);
+}
+
+// Formato de una sola vez (lo usa la IA y el panel de filtros):
+//   edad=18; paises=Colombia, México; iniciales=A M; excusa=Estamos llenos
+// También acepta "edad 18", saltos de línea y "|" como separadores.
+function parseFilterSpec(text) {
+  const chunks = String(text || "")
+    .split(/[;|\n]+/)
+    .flatMap((chunk) => chunk.split(/(?=\b(?:edad|age|paises|pais|countries|iniciales|inicial|initials|excusa|excuse)\s*[:=])/i))
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+
+  const spec = {};
+  const unknown = [];
+
+  for (const chunk of chunks) {
+    const match = chunk.match(/^([\p{L}]+)\s*[:=]?\s*([\s\S]*)$/u);
+    if (!match) {
+      unknown.push(chunk);
+      continue;
+    }
+
+    const key = normalize(match[1]);
+    const value = match[2].trim();
+    if (!value) {
+      unknown.push(chunk);
+      continue;
+    }
+
+    if (key === "edad" || key === "age") {
+      const age = parseAgeArg(value);
+      if (!age) return { ok: false, error: `⚠️ La edad «${value}» no es válida (1–99).` };
+      spec.minAge = age;
+      continue;
+    }
+
+    if (["paises", "pais", "countries"].includes(key)) {
+      const list = splitList(value);
+      if (!list.length) return { ok: false, error: "⚠️ Faltan los países. Ej: *!lobby filtros paises=Colombia, México*" };
+      spec.countries = list;
+      continue;
+    }
+
+    if (["iniciales", "inicial", "initials"].includes(key)) {
+      const letters = lettersOf(value);
+      if (!letters.length) return { ok: false, error: "⚠️ Faltan las iniciales. Ej: *!lobby filtros iniciales=A M*" };
+      spec.initials = letters;
+      continue;
+    }
+
+    if (key === "excusa" || key === "excuse") {
+      spec.excuse = value;
+      continue;
+    }
+
+    unknown.push(chunk);
+  }
+
+  return { ok: true, spec, unknown };
+}
+
+function applyFilterSpec(store, text) {
+  const mode = normalize(text);
+
+  if (["off", "quitar", "ninguno"].includes(mode)) {
+    store.setMinAge(0);
+    store.setCountries([]);
+    store.setInitials([]);
+    return { ok: true, applied: ["filtros desactivados"] };
+  }
+
+  if (["reset", "limpiar"].includes(mode)) {
+    store.setMinAge(0);
+    store.setCountries([]);
+    store.setInitials([]);
+    store.setExcuse("");
+    return { ok: true, applied: ["filtros y excusa a los valores de fábrica"] };
+  }
+
+  const parsed = parseFilterSpec(text);
+  if (!parsed.ok) return parsed;
+
+  if (!Object.keys(parsed.spec).length) {
+    return {
+      ok: false,
+      error: [
+        "⚠️ No entendí los filtros.",
+        `Usa: *!lobby filtros edad=18; paises=Colombia, México; iniciales=A M; excusa=Estamos llenos.*`,
+      ].join("\n"),
+    };
+  }
+
+  const applied = [];
+  if (parsed.spec.minAge !== undefined) {
+    store.setMinAge(parsed.spec.minAge);
+    applied.push(`edad ≥ ${parsed.spec.minAge}`);
+  }
+  if (parsed.spec.countries) {
+    store.setCountries(parsed.spec.countries);
+    applied.push(`países: ${parsed.spec.countries.join(", ")}`);
+  }
+  if (parsed.spec.initials) {
+    store.setInitials(parsed.spec.initials);
+    applied.push(`iniciales: ${parsed.spec.initials.join(", ").toUpperCase()}`);
+  }
+  if (parsed.spec.excuse !== undefined) {
+    store.setExcuse(parsed.spec.excuse);
+    applied.push("excusa propia");
+  }
+
+  return { ok: true, applied, unknown: parsed.unknown };
+}
+
 async function handle(ctx, store, options) {
   const auth = await getAdmin(ctx, options.ownerPolicy);
   if (!auth.ok) return auth.reason;
@@ -166,14 +289,7 @@ async function handle(ctx, store, options) {
       return "🚫 Filtro de iniciales desactivado.";
     }
     // Acepta "A M", "A,M" o "AM": se queda con las letras sueltas.
-    const letters = [...new Set(
-      splitList(value)
-        .join(" ")
-        .split(/[^\p{L}]+/u)
-        .join("")
-        .toLowerCase()
-        .split(""),
-    )].filter(Boolean);
+    const letters = lettersOf(value);
     if (!letters.length) {
       return `⚠️ Indica las iniciales. Ej: *${ctx.prefix}lobby iniciales A M* (el nombre debe empezar por una de ellas).`;
     }
@@ -201,15 +317,37 @@ async function handle(ctx, store, options) {
   }
 
   if (sub === "filtros" || sub === "filtro") {
+    const spec = String(ctx.commandBody || "").trim().replace(/^\S+\s*/, "").trim();
+
+    if (spec) {
+      const result = applyFilterSpec(store, spec);
+      if (!result.ok) return result.error;
+      await store.save();
+      return [
+        "✅ *Filtros actualizados.*",
+        "",
+        renderFilters(store.config()),
+        "",
+        result.applied.length ? `Cambiado: ${result.applied.join(" · ")}` : "",
+        result.unknown?.length ? `Ignoré: ${result.unknown.join(" · ")}` : "",
+        "Quien no cumpla recibe una excusa creíble, no el link del general.",
+      ].filter(Boolean).join("\n");
+    }
+
     return [
       "🚫 *Filtros de admisión*",
       "",
       renderFilters(store.config()),
       "",
+      "Todo de una vez:",
+      `*${ctx.prefix}lobby filtros edad=18; paises=Colombia, México; iniciales=A M; excusa=Estamos llenos, te avisamos.*`,
+      "",
+      "Uno por uno:",
       `• *${ctx.prefix}lobby edad 18* — edad mínima (\`off\` para quitar).`,
       `• *${ctx.prefix}lobby paises Colombia, México* — países aceptados (\`off\`).`,
       `• *${ctx.prefix}lobby iniciales A M* — iniciales del nombre (\`off\`).`,
       `• *${ctx.prefix}lobby excusa <texto>* — excusa propia (\`reset\`).`,
+      `• *${ctx.prefix}lobby filtros off* — quita edad, países e iniciales.`,
       "",
       "Quien no cumpla recibe una excusa creíble, no el link del general.",
     ].join("\n");

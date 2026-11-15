@@ -560,3 +560,85 @@ test("lobby: !lobby filtros resume la configuración", async () => {
   assert.match(reply, /A/);
   assert.match(reply, /lobby edad/);
 });
+
+test("lobby: !lobby filtros configura todo de una sola vez", async () => {
+  const store = fakeLobbyStore();
+
+  const reply = await runLobbyPlugin(
+    lobbyCtx({
+      args: ["filtros", "edad=18;", "paises=Colombia,", "México;", "iniciales=A", "M;", "excusa=Estamos", "llenos."],
+      commandBody: "filtros edad=18; paises=Colombia, México; iniciales=A M; excusa=Estamos llenos.",
+    }),
+    store,
+  );
+
+  assert.equal(store.state.minAge, 18);
+  assert.deepEqual(store.state.countries, ["Colombia", "México"]);
+  assert.deepEqual(store.state.initials, ["A", "M"]);
+  assert.equal(store.state.excuse, "Estamos llenos.");
+  assert.match(reply, /Filtros actualizados/);
+  assert.match(reply, /edad ≥ 18/);
+});
+
+test("lobby: !lobby filtros acepta saltos de línea y solo cambia lo que pide", async () => {
+  const store = fakeLobbyStore({ minAge: 21, excuse: "Cupo lleno." });
+
+  await runLobbyPlugin(
+    lobbyCtx({
+      args: ["filtros", "paises=Colombia"],
+      commandBody: "filtros\npaises=Colombia\niniciales=M J",
+    }),
+    store,
+  );
+
+  assert.equal(store.state.minAge, 21);
+  assert.deepEqual(store.state.countries, ["Colombia"]);
+  assert.deepEqual(store.state.initials, ["M", "J"]);
+  assert.equal(store.state.excuse, "Cupo lleno.");
+});
+
+test("lobby: !lobby filtros off quita los filtros y reset limpia la excusa", async () => {
+  const store = fakeLobbyStore({
+    minAge: 18,
+    countries: ["Colombia"],
+    initials: ["A"],
+    excuse: "Estamos llenos.",
+  });
+
+  const off = await runLobbyPlugin(
+    lobbyCtx({ args: ["filtros", "off"], commandBody: "filtros off" }),
+    store,
+  );
+
+  assert.equal(store.state.minAge, 0);
+  assert.deepEqual(store.state.countries, []);
+  assert.deepEqual(store.state.initials, []);
+  assert.equal(store.state.excuse, "Estamos llenos.");
+  assert.match(off, /desactivad|desactivados/);
+
+  await runLobbyPlugin(lobbyCtx({ args: ["filtros", "reset"], commandBody: "filtros reset" }), store);
+  assert.equal(store.state.excuse, "");
+});
+
+test("lobby: !lobby filtros rechaza una edad inválida sin tocar nada", async () => {
+  const store = fakeLobbyStore({ minAge: 18 });
+
+  const reply = await runLobbyPlugin(
+    lobbyCtx({ args: ["filtros", "edad=abc"], commandBody: "filtros edad=abc" }),
+    store,
+  );
+
+  assert.equal(store.state.minAge, 18);
+  assert.match(reply, /no es válida/);
+});
+
+test("lobby: !lobby filtros avisa cuando no reconoce nada", async () => {
+  const store = fakeLobbyStore();
+
+  const reply = await runLobbyPlugin(
+    lobbyCtx({ args: ["filtros", "xyz"], commandBody: "filtros xyz" }),
+    store,
+  );
+
+  assert.match(reply, /No entendí/);
+});

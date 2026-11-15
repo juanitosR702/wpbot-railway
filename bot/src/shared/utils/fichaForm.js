@@ -128,6 +128,116 @@ export function parseFieldLines(text) {
   return fields;
 }
 
+// Ficha completa pegada de una sola vez (lo que hace la IA o un admin que ya
+// tiene el texto). Bloques reconocidos, en cualquier orden:
+//
+//   ENCABEZADO: 🐉 FICHA DE INGRESO      -> todo hasta el siguiente bloque
+//   CAMPOS
+//   # DATOS DEL INTEGRANTE
+//   Nombre o apodo
+//   País | Colombia, México, Perú
+//   PIE: Gracias por tu interés.
+//
+// El encabezado (y `CAMPOS`/`PIE`) valen con o sin dos puntos y con o sin
+// corchetes. Lo que va antes de `CAMPOS` es el título, así que también sirve
+// pegar la ficha tal cual, sin marcadores de encabezado. Sin ningún marcador,
+// todo se interpreta como campos. Devuelve `{ header, footer, fields }` o lanza
+// Error con un mensaje claro.
+const FICHA_MARKERS = {
+  encabezado: "header",
+  titulo: "header",
+  header: "header",
+  cabecera: "header",
+  campos: "fields",
+  fields: "fields",
+  pie: "footer",
+  footer: "footer",
+};
+
+// "ENCABEZADO:", "[ENCABEZADO]", "Campos" o "PIE: texto" → clave de bloque.
+// Se compara sin acentos y sin importar mayúsculas.
+function fichaMarker(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed) return null;
+
+  const bracket = trimmed.match(/^\[([^\]]+)\]\s*[:.-]?\s*([\s\S]*)$/);
+  if (bracket) {
+    const key = markerKey(bracket[1]);
+    if (key) return { key, inline: bracket[2].trim() };
+  }
+
+  const colon = trimmed.match(/^([^:]{1,24}?)\s*:\s*([\s\S]*)$/);
+  if (colon) {
+    const key = markerKey(colon[1]);
+    if (key) return { key, inline: colon[2].trim() };
+  }
+
+  // Línea que es exactamente el marcador ("CAMPOS", "Pie").
+  const key = markerKey(trimmed);
+  if (key) return { key, inline: "" };
+
+  // Marcador EN MAYÚSCULAS con el texto pegado ("CAMPOS Nombre Edad").
+  const bare = trimmed.match(/^([\p{L}]{3,12})\s+([\s\S]*)$/u);
+  if (bare && bare[1] === bare[1].toUpperCase()) {
+    const inlineKey = markerKey(bare[1]);
+    if (inlineKey) return { key: inlineKey, inline: bare[2].trim() };
+  }
+
+  return null;
+}
+
+function markerKey(value) {
+  const name = String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return FICHA_MARKERS[name] || null;
+}
+
+export function parseFichaText(text) {
+  const WORD = "encabezado|titulo|t[íi]tulo|header|cabecera|campos|fields|pie|footer";
+  // Marcadores pegados al texto: "… CAMPOS Nombre" o "… PIE: gracias". Solo se
+  // parten los que van EN MAYÚSCULAS, para no romper etiquetas como "Pie de foto".
+  const inline = new RegExp(`\\s+(?=(?:ENCABEZADO|TITULO|T[ÍI]TULO|HEADER|CABECERA|CAMPOS|FIELDS|PIE|FOOTER)(?:\\s*:|\\s|$))`, "g");
+  const withColon = new RegExp(`\\s+(?=(?:${WORD})\\s*:)`, "gi");
+
+  const normalized = String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(withColon, "\n")
+    .replace(inline, "\n");
+
+  const blocks = { header: [], fields: [], footer: [] };
+  const preamble = [];
+  let current = "preamble";
+  let sawFields = false;
+
+  for (const line of normalized.split("\n")) {
+    const marker = fichaMarker(line);
+    if (marker) {
+      current = marker.key;
+      if (marker.key === "fields") sawFields = true;
+      if (marker.inline) blocks[current].push(marker.inline);
+      continue;
+    }
+    if (current === "preamble") preamble.push(line);
+    else blocks[current].push(line);
+  }
+
+  // Lo que va antes del primer marcador: si hay CAMPOS es el título de la
+  // ficha; si no hay marcadores, todo el texto son campos.
+  const headerLines = sawFields ? [...preamble, ...blocks.header] : blocks.header;
+  const fieldsText = sawFields
+    ? blocks.fields.join("\n")
+    : [...preamble, ...blocks.fields].join("\n");
+
+  return {
+    header: headerLines.join("\n").trim(),
+    footer: blocks.footer.join("\n").trim(),
+    fields: parseFieldLines(fieldsText),
+  };
+}
+
 function parseOptions(raw) {
   if (!raw) return [];
   return [...new Set(

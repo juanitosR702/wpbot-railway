@@ -97,10 +97,12 @@ export function createCommandRunner({ router, ownerPolicy, catalog, botNumberJid
       }
     }
 
-    const argText = (args || [])
-      .join(" ")
-      .replace(/[\r\n]+/g, " ")
-      .slice(0, MAX_ARGS_CHARS)
+    const limit = Number(entry.maxChars) > 0 ? Number(entry.maxChars) : MAX_ARGS_CHARS;
+    const joined = (args || []).join(" ");
+    // Los comandos con texto libre (pegar una ficha) conservan los saltos de
+    // línea; el resto se aplana para que el router lo trate como argumentos.
+    const argText = (entry.multiline ? joined : joined.replace(/[\r\n]+/g, " "))
+      .slice(0, limit)
       .trim();
     const text = `!${entry.name}${argText ? ` ${argText}` : ""}`;
 

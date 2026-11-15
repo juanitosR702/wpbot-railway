@@ -7,6 +7,7 @@ import {
   MAX_LIST_OPTIONS,
   formatFichaDate,
   formSteps,
+  parseFichaText,
   parseFieldLines,
   renderFicha,
   renderFormConfig,
@@ -435,6 +436,46 @@ async function configure(ctx, store, options) {
     const form = custom || DEFAULT_FICHA;
     const note = custom ? "" : "\n_(usando la ficha por defecto)_";
     return `⚙️ *Ficha de este grupo*${note}\n\n${renderFormConfig(form)}`;
+  }
+
+  // Carga de una sola vez: el admin (o la IA) pega la ficha completa y se
+  // guarda sin pasar por el asistente de 3 pasos.
+  if (["importar", "pegar", "texto", "rapido", "rápido", "import"].includes(action)) {
+    const raw = String(ctx.commandBody || "").trim().replace(/^\S+\s*/, "").trim();
+    if (!raw) {
+      return [
+        "⚠️ Pega la ficha después de *!setficha importar*.",
+        "",
+        "Ejemplo:",
+        "!setficha importar",
+        "ENCABEZADO: 🐉 FICHA DE INGRESO",
+        "CAMPOS",
+        "# DATOS DEL INTEGRANTE",
+        "Nombre o apodo",
+        "Edad",
+        "País | Colombia, México, Perú, Otro",
+        "PIE: Gracias por tu interés.",
+      ].join("\n");
+    }
+
+    let form;
+    try {
+      form = parseFichaText(raw);
+    } catch (err) {
+      return `⚠️ ${err.message}\n\nCorrige el texto y envíalo de nuevo.`;
+    }
+
+    store.setForm(ctx.phone, form, ctx.sender);
+    await store.save();
+
+    return [
+      "✅ *Ficha guardada para este grupo.*",
+      "",
+      renderFormConfig(form),
+      "",
+      "Los miembros ya pueden llenarla con *!ficha*.",
+      `Ajusta los filtros con *${ctx.prefix}lobby filtros edad=18; paises=Colombia, México* (o *${ctx.prefix}lobby filtros* para verlos).`,
+    ].join("\n");
   }
 
   if (action === "reset" || action === "reiniciar") {

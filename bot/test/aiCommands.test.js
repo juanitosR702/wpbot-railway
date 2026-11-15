@@ -435,3 +435,72 @@ test("router: commandBody conserva espacios y saltos de linea", async () => {
   assert.strictEqual(captured.commandBody, "Hola   {user}\n\nsegunda linea");
   assert.deepStrictEqual(captured.args, ["Hola", "{user}", "segunda", "linea"]);
 });
+
+test("runner: los comandos multilinea conservan la ficha pegada", () => {
+  const runner = createCommandRunner({
+    router: {},
+    ownerPolicy: null,
+    catalog: { get: () => null },
+  });
+  const entry = { name: "setficha", multiline: true, maxChars: 2000 };
+
+  const synthetic = runner.buildSyntheticMessage(
+    { key: { remoteJid: "120987654321@g.us", participant: "111@s.whatsapp.net" } },
+    entry,
+    ["importar\nENCABEZADO: FICHA\nCAMPOS\nNombre\nEdad"],
+  );
+
+  assert.strictEqual(
+    synthetic.message.extendedTextMessage.text,
+    "!setficha importar\nENCABEZADO: FICHA\nCAMPOS\nNombre\nEdad",
+  );
+});
+
+test("runner: el mensaje sintetico de setficha llega al plugin con la ficha intacta", async () => {
+  const router = new Router();
+  let captured = null;
+  router.register(
+    async (ctx) => {
+      captured = ctx;
+      return "ok";
+    },
+    { commands: ["setficha"], category: "FICHAS" },
+  );
+
+  const runner = createCommandRunner({
+    router,
+    ownerPolicy: null,
+    catalog: { get: () => null },
+  });
+  const synthetic = runner.buildSyntheticMessage(
+    { key: { remoteJid: "120363000000@g.us", participant: "111@s.whatsapp.net" } },
+    { name: "setficha", multiline: true, maxChars: 2000 },
+    ["importar\nCAMPOS\n# DATOS\nNombre o apodo\nEdad\nPaís | Colombia, México\nPIE: Gracias"],
+  );
+
+  await router.route(synthetic, {});
+
+  assert.strictEqual(captured.command, "setficha");
+  assert.deepStrictEqual(captured.args, ["importar", "CAMPOS", "#", "DATOS", "Nombre", "o", "apodo", "Edad", "País", "|", "Colombia,", "México", "PIE:", "Gracias"]);
+  assert.strictEqual(
+    captured.commandBody,
+    "importar\nCAMPOS\n# DATOS\nNombre o apodo\nEdad\nPaís | Colombia, México\nPIE: Gracias",
+  );
+});
+
+test("catalogo: lobby y setficha son de admin y setficha es multilinea", () => {
+  const router = new Router();
+  router.register(async () => null, { commands: ["lobby"], category: "LOBBY" });
+  router.register(async () => null, { commands: ["setficha"], category: "FICHAS" });
+
+  const catalog = createCommandCatalog(router);
+
+  const lobby = catalog.get("lobby");
+  assert.strictEqual(lobby.level, LEVEL.ADMIN);
+  assert.match(lobby.usage, /filtros/);
+
+  const setficha = catalog.get("setficha");
+  assert.strictEqual(setficha.level, LEVEL.ADMIN);
+  assert.strictEqual(setficha.multiline, true);
+  assert.ok(setficha.maxChars >= 1000);
+});
