@@ -15,6 +15,8 @@ import {
   validateFichaValues,
 } from "../../../shared/utils/fichaForm.js";
 import {
+  describeCondition,
+  normalizeRouteText,
   parseRouteCondition,
   renderRoutes,
   resolveFichaTargets,
@@ -855,6 +857,66 @@ async function setDestination(ctx, store, options) {
 
 // ---- Rutas de destino (varios grupos con condiciones) ----
 
+// Condiciones y link de una ruta: mismas reglas para `!rutas aqui` y
+// `!rutas agregar <grupo>`.
+function parseRouteArgs(tokens = []) {
+  const conditions = [];
+  let invite = "";
+  for (const token of tokens) {
+    const linkMatch = token.match(/^link=(.+)$/i);
+    if (linkMatch) {
+      const value = linkMatch[1].trim();
+      if (!/^https?:/i.test(value) && !["auto", "propio"].includes(normalize(value))) {
+        return { error: "⚠️ El *link=* debe ser una URL que empiece por https:// (o *link=auto* para generar el del grupo)." };
+      }
+      invite = ["auto", "propio"].includes(normalize(value)) ? "auto" : value;
+      continue;
+    }
+    const parsed = parseRouteCondition(token);
+    if (!parsed) {
+      return { error: `⚠️ No entendí «${token}».\nUsa *campo=valor* (ej: *edad<16*, *pais=colombia|mexico*) o *link=<url>*.` };
+    }
+    conditions.push(parsed);
+  }
+  return { conditions, invite, error: "" };
+}
+
+// Grupos donde está el bot, con su nombre real (para no pedir JIDs nunca).
+async function listBotGroups(ctx) {
+  const fn = ctx.services?.listGroups;
+  if (typeof fn !== "function") return [];
+  try {
+    const map = await fn();
+    return Object.entries(map || {})
+      .map(([jid, info]) => ({
+        jid,
+        name: String(info?.subject || info?.name || "").trim(),
+        scope: info?.linkedParent || "",
+      }))
+      .filter((group) => group.name);
+  } catch (err) {
+    console.warn("[ficha] no pude listar los grupos del bot:", err?.message || err);
+    return [];
+  }
+}
+
+function matchGroupsByName(groups, query) {
+  const wanted = normalizeRouteText(query);
+  if (!wanted) return [];
+  const exact = groups.filter((group) => normalizeRouteText(group.name) === wanted);
+  if (exact.length) return exact;
+  return groups.filter((group) => normalizeRouteText(group.name).includes(wanted));
+}
+
+async function safeGroupMetadataOf(ctx, jid) {
+  try {
+    return await ctx.services?.getGroupMetadata?.(jid);
+  } catch (err) {
+    console.warn(`[ficha] metadata de ${jid}:`, err?.message || err);
+    return null;
+  }
+}
+
 async function manageRoutes(ctx, store, options) {
   if (!ctx.isGroup) return MSG.SOLO_GRUPOS;
 
@@ -906,7 +968,95 @@ async function manageRoutes(ctx, store, options) {
     return `🗑️ Ruta *${target.name}* eliminada (${names[target.jid] || target.jid}).`;
   }
 
-  if (["aqui", "add", "agregar", "anadir"].includes(action)) {
+  if (["grupos", "lista-grupos", "grupos-grupos"].includes(action)) {
+    const groups = await listBotGroups(ctx);
+    if (!groups.length) {
+      return "⚠️ No pude leer la lista de grupos del bot. Escríbelo desde un grupo donde el bot esté y sea admin.";
+    }
+    const conRuta = new Set(routes.map((route) => route.jid));
+    const lines = ["🏘️ *Grupos del bot* (los que ya tienen ruta van con ✅)", ""];
+    for (const group of groups.slice(0, 40)) {
+      lines.push(`${conRuta.has(group.jid) ? "✅" : "•"} ${group.name}`);
+    }
+    lines.push("", "Para crear una ruta: *!rutas agregar <nombre del grupo> [condiciones]*", "Ej: *!rutas agregar Grupo -16 edad<16*");
+    return lines.join("\n");
+  }
+
+  if (["agregar", "anadir"].includes(action)) {
+    const tokens = String(ctx.commandBody || "").trim().split(/\s+/).filter(Boolean).slice(1);
+    if (!tokens.length) {
+      return [
+        "Uso: *!rutas agregar <nombre del grupo> [condiciones]*",
+        "",
+        "Ejemplos:",
+        "• *!rutas agregar Grupo -16 edad<16*",
+        "• *!rutas agregar +17 actividades NR edad>=16*",
+        "• *!rutas agregar Grupo -16 edad<16 link=auto*",
+        "",
+        "Mira los nombres exactos con *!rutas grupos*.",
+      ].join("\n");
+    }
+
+    const isConditionToken = (token) => /link=/i.test(token) || /[=<>]/.test(token) || /^\d+-\d+$/.test(token);
+    const nameTokens = [];
+    let cursor = 0;
+    while (cursor < tokens.length && !isConditionToken(tokens[cursor])) nameTokens.push(tokens[cursor++]);
+    const query = nameTokens.join(" ").trim();
+    if (!query) {
+      return "⚠️ Falta el nombre del grupo antes de las condiciones.\nMíralos con *!rutas grupos*.";
+    }
+
+    const parsed = parseRouteArgs(tokens.slice(cursor));
+    if (parsed.error) return parsed.error;
+
+    const groups = await listBotGroups(ctx);
+    if (!groups.length) {
+      return "⚠️ No pude leer la lista de grupos del bot. Prueba desde un grupo donde el bot esté y sea admin.";
+    }
+
+    const matches = matchGroupsByName(groups, query);
+    if (!matches.length) {
+      return `⚠️ No encontré ningún grupo que se llame «${query}».\nMira los nombres exactos con *!rutas grupos*.`;
+    }
+    if (matches.length > 1) {
+      return [
+        `Hay ${matches.length} grupos que coinciden con «${query}»:`,
+        "",
+        ...matches.slice(0, 10).map((group) => `• ${group.name}`),
+        "",
+        "Escribe más parte del nombre para elegir uno.",
+      ].join("\n");
+    }
+
+    const target = matches[0];
+    const targetMeta = await safeGroupMetadataOf(ctx, target.jid);
+    const scope = target.scope || targetMeta?.linkedParent || "";
+
+    const route = store.addRoute({
+      name: target.name,
+      jid: target.jid,
+      scope,
+      invite: parsed.invite,
+      conditions: parsed.conditions,
+      enabled: true,
+      updatedBy: ctx.sender,
+    });
+    await store.save();
+
+    const detalle = parsed.conditions.length
+      ? `Recibirá a quien cumpla: ${parsed.conditions.map(describeCondition).join(" · ")}`
+      : "Recibirá a quien no encaje en ninguna otra ruta (comodín).";
+    const total = typeof store.routes === "function" ? store.routes().length : routes.length;
+
+    return [
+      `✅ Ruta *${route.name}* creada (${total} en total).`,
+      detalle,
+      scope ? "" : "_Ese grupo no está en una comunidad: la ruta vale para todas las fichas._",
+      `Míralas con *!rutas ver*.`,
+    ].filter(Boolean).join("\n");
+  }
+
+  if (["aqui", "add"].includes(action)) {
     const tokens = String(ctx.commandBody || "").trim().split(/\s+/).filter(Boolean);
     const meta = await safeGroupMetadata(ctx);
     const jid = currentGroupJid(ctx);
@@ -923,24 +1073,8 @@ async function manageRoutes(ctx, store, options) {
       rest = tokens.slice(1);
     }
 
-    const conditions = [];
-    let invite = "";
-    for (const token of rest) {
-      const linkMatch = token.match(/^link=(.+)$/i);
-      if (linkMatch) {
-        const value = linkMatch[1].trim();
-        if (!/^https?:/i.test(value) && !["auto", "propio"].includes(normalize(value))) {
-          return "⚠️ El *link=* debe ser una URL que empiece por https:// (o *link=auto* para generar el del grupo).";
-        }
-        invite = ["auto", "propio"].includes(normalize(value)) ? "auto" : value;
-        continue;
-      }
-      const parsed = parseRouteCondition(token);
-      if (!parsed) {
-        return `⚠️ No entendí «${token}».\nUsa *campo=valor* (ej: *edad<16*, *pais=colombia|mexico*) o *link=<url>*.`;
-      }
-      conditions.push(parsed);
-    }
+    const { conditions, invite, error } = parseRouteArgs(rest);
+    if (error) return error;
 
     const route = store.addRoute({
       name,
@@ -974,7 +1108,7 @@ async function manageRoutes(ctx, store, options) {
     ].filter(Boolean).join("\n");
   }
 
-  return "Uso: *!rutas ver*, *!rutas aqui [nombre] [condiciones]*, *!rutas quitar <grupo>* o *!rutas limpiar*.";
+  return "Uso: *!rutas ver*, *!rutas grupos*, *!rutas agregar <grupo> [condiciones]*, *!rutas aqui [condiciones]*, *!rutas quitar <grupo>* o *!rutas limpiar*.";
 }
 
 async function safeGroupMetadata(ctx) {

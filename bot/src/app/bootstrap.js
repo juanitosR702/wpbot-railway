@@ -523,6 +523,7 @@ function buildServices() {
     sendList: (jid, payload) => connection.sendList(jid, payload),
     deleteMessage: (jid, key) => connection.sock?.sendMessage(jid, { delete: key }),
     getGroupMetadata: (jid) => connection.sock?.groupMetadata(jid),
+    listGroups: () => connection.sock?.groupFetchAllParticipating(),
     updateGroupSetting: (jid, setting) => connection.sock?.groupSettingUpdate(jid, setting),
     updateParticipants: (jid, participants, action) =>
       connection.sock?.groupParticipantsUpdate(jid, participants, action),

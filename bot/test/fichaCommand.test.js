@@ -450,3 +450,75 @@ test("ficha: registra a la persona y sus grupos para aprobar solicitudes", async
   assert.ok(members.every((item) => item.data.groups.includes(TEENS)));
   assert.ok(members.some((item) => item.jid === ctx.sender));
 });
+
+test("rutas: !rutas agregar crea la ruta de otro grupo por su nombre", async () => {
+  const routes = [];
+  const store = fakeStore({
+    routes: () => routes,
+    addRoute: (route) => {
+      routes.push(route);
+      return route;
+    },
+  });
+  const handler = await setup(store);
+  const { ctx } = makeCtxWithSender(61, { commandBody: "agregar Grupo -16 edad<16" });
+  const groups = {
+    [TEENS]: { subject: "Grupo -16", linkedParent: "com@g.us" },
+    [ADULTOS]: { subject: "+17 actividades NR" },
+  };
+
+  const reply = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["agregar", "Grupo", "-16", "edad<16"],
+    services: { ...ctx.services, listGroups: async () => groups },
+  });
+
+  assert.strictEqual(routes.length, 1);
+  assert.strictEqual(routes[0].jid, TEENS);
+  assert.strictEqual(routes[0].name, "Grupo -16");
+  assert.strictEqual(routes[0].scope, "com@g.us");
+  assert.deepStrictEqual(routes[0].conditions, [{ field: "edad", type: "range", min: 0, max: 15 }]);
+  assert.match(reply, /Ruta \*Grupo -16\* creada/);
+});
+
+test("rutas: !rutas agregar avisa si el nombre coincide con varios grupos", async () => {
+  const handler = await setup(fakeStore({ routes: () => [] }));
+  const { ctx } = makeCtxWithSender(62, { commandBody: "agregar actividades edad>=16" });
+  const groups = {
+    "1@g.us": { subject: "Actividades NR" },
+    "2@g.us": { subject: "Actividades Royale" },
+  };
+
+  const reply = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["agregar", "actividades", "edad>=16"],
+    services: { ...ctx.services, listGroups: async () => groups },
+  });
+
+  assert.match(reply, /2 grupos que coinciden/);
+  assert.match(reply, /Actividades NR/);
+});
+
+test("rutas: !rutas grupos lista los grupos del bot con nombre", async () => {
+  const handler = await setup(fakeStore({ routes: () => [{ name: "Grupo -16", jid: TEENS, conditions: [] }] }));
+  const { ctx } = makeCtxWithSender(63, { commandBody: "grupos" });
+  const groups = {
+    [TEENS]: { subject: "Grupo -16" },
+    [ADULTOS]: { subject: "+17 actividades NR" },
+  };
+
+  const reply = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["grupos"],
+    services: { ...ctx.services, listGroups: async () => groups },
+  });
+
+  assert.match(reply, /✅ Grupo -16/);
+  assert.match(reply, /• \+17 actividades NR/);
+});
