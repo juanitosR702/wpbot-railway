@@ -380,3 +380,27 @@ test("rutas: !rutas quitar aqui borra la ruta de este grupo", async () => {
   assert.strictEqual(removed, "Clan");
   assert.match(reply, /eliminada/);
 });
+
+test("ficha: muestra el teléfono aunque el remitente llegue como LID", async () => {
+  const handler = await setup(fakeStore({ form: () => TWO_FIELDS }));
+  const lid = "99887766554433@lid";
+  const phone = "573001119999@s.whatsapp.net";
+  const { ctx, sent } = makeCtx({
+    sender: lid,
+    raw: { key: { participant: lid, participantPn: phone } },
+    getGroupMetadata: async () => ({
+      subject: "Clan",
+      participants: [{ id: lid, phoneNumber: "573001119999", admin: "admin" }],
+    }),
+  });
+
+  await handler({ ...ctx, isCommand: true, command: "ficha" });
+  await handler({ ...ctx, text: "Ana" });
+  await handler({ ...ctx, selection: "f:o:1:0" });
+  await handler({ ...ctx, selection: "f:s" });
+
+  const delivery = sent.at(-1);
+  assert.match(delivery.content.text, /@573001119999/);
+  assert.strictEqual(delivery.content.text.includes("99887766554433"), false);
+  assert.deepStrictEqual(delivery.content.mentions, [phone]);
+});

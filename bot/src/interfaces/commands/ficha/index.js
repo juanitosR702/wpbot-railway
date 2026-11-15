@@ -366,15 +366,18 @@ async function submitFicha(ctx, store, session, options = {}) {
   }
 
   const metadata = await safeGroupMetadata(ctx);
+  // El remitente puede venir como LID (`123...@lid`); en la ficha debe salir su
+  // número de teléfono, igual que la mención.
+  const senderJid = phoneSenderJid(ctx, metadata);
   const text = renderFicha(session.form, session.values, {
-    senderNumber: jidUser(ctx.sender),
+    senderNumber: jidUser(senderJid),
     senderName: ctx.name && ctx.name !== ctx.sender ? ctx.name : "",
     groupName: metadata?.subject || "",
     date: formatFichaDate(),
   });
 
   try {
-    await ctx.services.sendMessage(destination, { text, mentions: [ctx.sender] });
+    await ctx.services.sendMessage(destination, { text, mentions: [senderJid] });
   } catch (err) {
     console.error("[ficha] no se pudo enviar al grupo destino:", err?.message || err);
     return "⚠️ No pude enviar la ficha al grupo de almacenamiento. Avisa a un admin.";
@@ -434,6 +437,23 @@ async function tryAddToGroup(ctx, jid) {
     }
   }
   return false;
+}
+
+// WhatsApp entrega al remitente como teléfono o como LID (y cambia entre
+// mensajes). La ficha debe mostrar siempre el número: se busca la variante
+// `@s.whatsapp.net` en el mensaje y, si no está, en la metadata del grupo.
+function phoneSenderJid(ctx, metadata) {
+  const key = ctx.raw?.key || {};
+  const ids = [key.participantPn, key.participantAlt, key.participant, ctx.sender]
+    .filter(Boolean)
+    .map((id) => String(id));
+  const participant = findParticipant(metadata, ids);
+  const all = [
+    participant?.phoneNumber,
+    participant?.id,
+    ...ids,
+  ].filter(Boolean).map((id) => String(id));
+  return all.find((id) => id.endsWith("@s.whatsapp.net")) || String(ctx.sender || "");
 }
 
 function currentGroupJid(ctx) {
