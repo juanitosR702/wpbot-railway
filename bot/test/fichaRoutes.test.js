@@ -106,6 +106,21 @@ test("resolveFichaTargets: no repite el mismo grupo", () => {
   assert.strictEqual(result.sends.length, 1);
 });
 
+test("resolveFichaTargets: no mezcla comunidades distintas", () => {
+  const routes = [
+    { name: "mía", jid: "1@g.us", scope: "comunidadA", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "ajena", jid: "2@g.us", scope: "comunidadB", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+  ];
+  const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "comunidadA" });
+  assert.deepStrictEqual(result.sends.map((s) => s.jid), ["1@g.us"]);
+});
+
+test("resolveFichaTargets: las rutas antiguas sin scope siguen valiendo", () => {
+  const routes = [{ name: "vieja", jid: "7@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] }];
+  const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "comunidadA" });
+  assert.deepStrictEqual(result.sends.map((s) => s.jid), ["7@g.us"]);
+});
+
 test("resolveFichaTargets: sin rutas no hay destinos", () => {
   assert.deepStrictEqual(resolveFichaTargets([], FORM, VALUES).sends, []);
   assert.deepStrictEqual(resolveFichaTargets(undefined, FORM, VALUES).sends, []);
@@ -116,4 +131,6 @@ test("renderRoutes: explica cómo crear la primera ruta", () => {
   const texto = renderRoutes([{ name: "teens", jid: "1@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] }]);
   assert.match(texto, /teens/);
   assert.match(texto, /13–17/);
+  assert.match(texto, /nombre no disponible/);
+  assert.match(renderRoutes([{ name: "t", jid: "1@g.us", conditions: [] }], { names: { "1@g.us": "Clan Teens" } }), /Clan Teens/);
 });

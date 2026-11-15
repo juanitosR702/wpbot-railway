@@ -436,6 +436,19 @@ async function tryAddToGroup(ctx, jid) {
   return false;
 }
 
+async function groupNames(ctx, routes) {
+  const names = {};
+  for (const route of routes) {
+    try {
+      const meta = await ctx.services?.getGroupMetadata?.(route.jid);
+      if (meta?.subject) names[route.jid] = meta.subject;
+    } catch {
+      // Sin nombre disponible: se muestra el JID igualmente.
+    }
+  }
+  return names;
+}
+
 async function routeInviteLink(ctx, route) {
   const direct = String(route?.invite || "").trim();
   if (/^https?:/i.test(direct)) return direct;
@@ -452,7 +465,10 @@ async function deliverByRoutes(ctx, store, session) {
   const routes = typeof store.routes === "function" ? store.routes() : [];
   if (!routes.length) return { notes: [] };
 
-  const { sends, fallback } = resolveFichaTargets(routes, session.form, session.values);
+  // Solo cuentan las rutas de la comunidad donde se llenó la ficha.
+  const meta = await safeGroupMetadata(ctx);
+  const scope = meta?.linkedParent || `${ctx.phone}@g.us`;
+  const { sends, fallback } = resolveFichaTargets(routes, session.form, session.values, { scope });
   if (!sends.length) return { notes: [] };
 
   const added = [];
@@ -732,7 +748,9 @@ async function manageRoutes(ctx, store, options) {
   const action = normalize(ctx.args[0] || "");
   const routes = typeof store.routes === "function" ? store.routes() : [];
 
-  if (!action || ["ver", "lista", "listar"].includes(action)) return renderRoutes(routes);
+  if (!action || ["ver", "lista", "listar"].includes(action)) {
+    return renderRoutes(routes, { names: await groupNames(ctx, routes) });
+  }
 
   if (["limpiar", "reset", "vaciar"].includes(action)) {
     store.clearRoutes();
@@ -785,10 +803,16 @@ async function manageRoutes(ctx, store, options) {
       conditions.push(parsed);
     }
 
+    // Cada ruta queda atada a la comunidad del grupo donde se ejecuta, para que
+    // dos comunidades no se mezclen (si el grupo no está en ninguna, la clave
+    // es el propio grupo).
+    const meta = await safeGroupMetadata(ctx);
     const jid = `${ctx.phone}@g.us`;
+    const scope = meta?.linkedParent || jid;
     const route = store.addRoute({
       name,
       jid,
+      scope,
       invite,
       conditions,
       enabled: true,
@@ -806,7 +830,9 @@ async function manageRoutes(ctx, store, options) {
       return `⚠️ Guardé la ruta, pero no pude escribir en este grupo: ${err?.message || err}`;
     }
 
-    return `✅ Ruta *${route.name}* activa en este grupo (${routes.length + 1} en total).\nMíralas con *!rutas ver*.`;
+    const total = typeof store.routes === "function" ? store.routes().length : routes.length;
+    const comunidad = route.scope && route.scope !== jid ? "\n🏘 Queda ligada a esta comunidad." : "";
+    return `✅ Ruta *${route.name}* activa en este grupo (${total} en total).${comunidad}\nMíralas con *!rutas ver*.`;
   }
 
   return "Uso: *!rutas ver*, *!rutas aqui <nombre> [condiciones]*, *!rutas quitar <nombre>* o *!rutas limpiar*.";

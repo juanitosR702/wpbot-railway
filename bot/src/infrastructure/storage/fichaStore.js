@@ -60,6 +60,7 @@ export class FichaStore extends BaseStore {
       id: route.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name: route.name || "",
       jid: route.jid || "",
+      scope: route.scope || "",
       invite: route.invite || "",
       conditions: route.conditions || [],
       enabled: route.enabled !== false,

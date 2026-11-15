@@ -109,8 +109,15 @@ export function routeMatches(route, form, values) {
  * Primero, todos los que cumplan sus condiciones; si ninguno coincide, los
  * comodines (rutas sin condiciones). Los JID repetidos se envían una sola vez.
  */
-export function resolveFichaTargets(routes, form, values) {
-  const active = (routes || []).filter((route) => route?.jid && route.enabled !== false);
+export function resolveFichaTargets(routes, form, values, { scope = "" } = {}) {
+  // `scope` es la comunidad (o el grupo) donde se llenó la ficha: cada comunidad
+  // tiene sus propios grupos y no debe recibir gente de otra. Las rutas sin
+  // `scope` (creadas antes de esto) se mantienen globales.
+  const active = (routes || []).filter((route) => {
+    if (!route?.jid || route.enabled === false) return false;
+    if (!route.scope) return true;
+    return !scope || route.scope === scope;
+  });
   const conditional = active.filter((route) => (route.conditions || []).length);
   const wildcards = active.filter((route) => !(route.conditions || []).length);
 
@@ -140,7 +147,7 @@ export function describeCondition(condition) {
 }
 
 /** Listado de rutas configuradas. */
-export function renderRoutes(routes) {
+export function renderRoutes(routes, { names = {} } = {}) {
   const list = routes || [];
   if (!list.length) {
     return [
@@ -160,10 +167,15 @@ export function renderRoutes(routes) {
       ? conditions.map(describeCondition).join(" · ")
       : "comodín (recibe las que no encajen)";
     const estado = route.enabled === false ? " ⏸" : "";
-    const link = /^https?:/i.test(String(route.invite || "")) ? " · link fijo" : " · link automático";
+    const link = /^https?:/i.test(String(route.invite || "")) ? "link fijo" : "link automático";
+    const nombreGrupo = names[route.jid] || "(nombre no disponible)";
+    const comunidad = route.scope && route.scope !== route.jid ? " · comunidad" : "";
     lines.push(`${index + 1}. *${route.name || "sin nombre"}*${estado} — ${detalle}`);
-    lines.push(`   ${route.jid}${link}`);
+    lines.push(`   🏷 ${nombreGrupo}`);
+    lines.push(`   ${route.jid}${comunidad}`);
+    lines.push(`   🔗 ${link}`);
   });
-  lines.push("", "La ficha se manda a *todos* los grupos cuyas condiciones se cumplan.");
+  lines.push("", "La ficha se publica en el grupo de almacén y el bot añade a la persona");
+  lines.push("a todos los grupos de *su misma comunidad* cuyas condiciones se cumplan.");
   return lines.join("\n");
 }
