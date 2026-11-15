@@ -951,7 +951,9 @@ function dropRouteWizard(ctx, wizard) {
 }
 
 async function startRouteWizard(ctx, store) {
-  const groups = await listBotGroups(ctx);
+  const originMeta = await safeGroupMetadata(ctx);
+  const originScope = originMeta?.linkedParent || "";
+  const { groups, aviso } = await groupsOfCommunity(ctx, originScope);
   if (!groups.length) {
     return "⚠️ No pude leer la lista de grupos del bot. Prueba desde un grupo donde el bot esté y sea admin.";
   }
@@ -961,16 +963,18 @@ async function startRouteWizard(ctx, store) {
 
   const routes = typeof store?.routes === "function" ? store.routes() : [];
   const conRuta = new Set(routes.map((route) => route.jid));
-  const originMeta = await safeGroupMetadata(ctx);
-  const wizard = { step: "groups", groups, originScope: originMeta?.linkedParent || "", at: Date.now() };
+  const wizard = { step: "groups", groups, originScope, aviso, at: Date.now() };
   saveRouteWizard(ctx, wizard);
 
+  const comunidad = await groupNamesFor(ctx, originScope ? [originScope] : []);
   return [
     "🧭 *Asistente de rutas*",
+    originScope ? `🏘️ Comunidad: ${comunidad[originScope] || originScope}` : "🏘️ Grupo sin comunidad",
     "",
     "1️⃣ ¿A qué grupos se añade? Responde con los números (puedes poner varios: *1,3*).",
     "",
     ...groups.map((group, index) => `${index + 1}. ${group.name}${conRuta.has(group.jid) ? " ✅" : ""}`),
+    ...(aviso ? ["", aviso] : []),
     "",
     "_Escribe *cancelar* para salir._",
   ].join("\n");
@@ -1087,6 +1091,25 @@ async function resolveTargetScope(ctx, target, originScope) {
   return { scope, error: "" };
 }
 
+// Grupos que pertenecen a la comunidad del grupo actual. Si WhatsApp no informa
+// la comunidad de ningún grupo, se devuelven todos con un aviso: en ese caso la
+// validación de `resolveTargetScope` sigue impidiendo crear rutas cruzadas.
+async function groupsOfCommunity(ctx, originScope) {
+  const groups = await listBotGroups(ctx);
+  if (!originScope) return { groups, aviso: "" };
+
+  const mismo = groups.filter((group) => group.scope === originScope);
+  if (mismo.length) return { groups: mismo, aviso: "" };
+
+  const declarados = groups.some((group) => group.scope);
+  return {
+    groups,
+    aviso: declarados
+      ? "⚠️ Esos grupos no están en esta comunidad; al crear la ruta se rechazarán."
+      : "⚠️ WhatsApp no me dio la comunidad de los grupos; solo se aceptarán los de esta comunidad al crear la ruta.",
+  };
+}
+
 async function manageRoutes(ctx, store, options) {
   if (!ctx.isGroup) return MSG.SOLO_GRUPOS;
 
@@ -1099,13 +1122,13 @@ async function manageRoutes(ctx, store, options) {
   if (!action || ["ver", "lista", "listar"].includes(action)) {
     const meta = await safeGroupMetadata(ctx);
     const originScope = meta?.linkedParent || "";
-    // Solo el creador ve las rutas de otras comunidades; un admin ve las suyas
-    // (y las globales) y ni siquiera se le dice cuántas hay fuera.
-    const visibles = auth.isCreator
+    // Dentro de una comunidad se muestra su tablero y nada más: las rutas de
+    // esta comunidad y las globales. Solo el creador puede pedir el resto con
+    // `!rutas ver todas`.
+    const wantsAll = auth.isCreator && ["todas", "todos", "all"].includes(normalize(ctx.args[1] || ""));
+    const visibles = wantsAll || !originScope
       ? routes
-      : originScope
-        ? routes.filter((route) => !route.scope || route.scope === originScope)
-        : routes;
+      : routes.filter((route) => !route.scope || route.scope === originScope);
 
     const names = await groupNames(ctx, visibles);
     const communities = await groupNamesFor(ctx, [...new Set(visibles.map((route) => route.scope).filter(Boolean))]);
@@ -1151,16 +1174,18 @@ async function manageRoutes(ctx, store, options) {
   }
 
   if (["grupos", "lista-grupos", "grupos-grupos"].includes(action)) {
-    const groups = await listBotGroups(ctx);
+    const meta = await safeGroupMetadata(ctx);
+    const { groups, aviso } = await groupsOfCommunity(ctx, meta?.linkedParent || "");
     if (!groups.length) {
       return "⚠️ No pude leer la lista de grupos del bot. Escríbelo desde un grupo donde el bot esté y sea admin.";
     }
     const conRuta = new Set(routes.map((route) => route.jid));
-    const lines = ["🏘️ *Grupos del bot* (los que ya tienen ruta van con ✅)", ""];
+    const lines = ["🏘️ *Grupos de esta comunidad* (los que ya tienen ruta van con ✅)", ""];
     for (const group of groups.slice(0, 40)) {
       lines.push(`${conRuta.has(group.jid) ? "✅" : "•"} ${group.name}`);
     }
-    lines.push("", "Para crear una ruta: *!rutas agregar <nombre del grupo> [condiciones]*", "Ej: *!rutas agregar Grupo -16 edad<16*");
+    lines.push("", "Para crear una ruta: *!rutas agregar* (asistente) o *!rutas agregar <nombre> [condiciones]*");
+    if (aviso) lines.push("", aviso);
     return lines.join("\n");
   }
 

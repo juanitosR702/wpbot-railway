@@ -657,7 +657,7 @@ test("rutas: !rutas agregar rechaza un destino sin comunidad cuando aquí sí ha
   assert.match(reply, /no reporta comunidad/);
 });
 
-test("rutas: un admin solo ve las rutas de su comunidad; el creador ve todas", async () => {
+test("rutas: dentro de una comunidad solo se ven sus rutas; el creador puede pedir todas", async () => {
   const routes = [
     { name: "aquí", jid: TEENS, scope: "comA@g.us", conditions: [] },
     { name: "global", jid: ADULTOS, scope: "", conditions: [] },
@@ -674,29 +674,63 @@ test("rutas: un admin solo ve las rutas de su comunidad; el creador ve todas", a
     participants: [{ id: "573000000076@s.whatsapp.net", admin: "admin" }],
   });
 
-  async function renderAs(isCreator) {
+  async function renderAs(isCreator, extraArgs = [], commandBody = "ver") {
     let handler = null;
     fichaPlugin.register(
       { register: (fn) => { handler = fn; }, getCommands: () => [], prefix: "!" },
       { store, ownerPolicy: { isCreatorJid: () => isCreator } },
     );
-    const { ctx } = makeCtxWithSender(76, { commandBody: "ver", getGroupMetadata: metaFetch });
+    const { ctx } = makeCtxWithSender(76, { commandBody, getGroupMetadata: metaFetch });
     return handler({
       ...ctx,
       isCommand: true,
       command: "rutas",
-      args: ["ver"],
+      args: ["ver", ...extraArgs],
       services: { ...ctx.services, getGroupMetadata: metaFetch },
     });
   }
 
-  const admin = await renderAs(false);
-  assert.match(admin, /aquí/);
-  assert.match(admin, /global/);
-  assert.strictEqual(admin.includes("ajena"), false);
-  assert.strictEqual(/otra comunidad/i.test(admin), false);
+  // Dentro de la comunidad, ni el creador ve otras comunidades por defecto.
+  for (const isCreator of [false, true]) {
+    const vista = await renderAs(isCreator);
+    assert.match(vista, /aquí/);
+    assert.match(vista, /global/);
+    assert.strictEqual(vista.includes("ajena"), false);
+  }
 
-  const creador = await renderAs(true);
-  assert.match(creador, /ajena/);
-  assert.match(creador, /aquí/);
+  // El escape existe solo para el creador.
+  const adminTodas = await renderAs(false, ["todas"], "ver todas");
+  assert.strictEqual(adminTodas.includes("ajena"), false);
+
+  const creadorTodas = await renderAs(true, ["todas"], "ver todas");
+  assert.match(creadorTodas, /ajena/);
+  assert.match(creadorTodas, /aquí/);
+});
+
+test("rutas: el asistente y !rutas grupos solo listan los grupos de esta comunidad", async () => {
+  const store = fakeStore({ routes: () => [] });
+  const handler = await setup(store);
+  const groups = {
+    "1@g.us": { subject: "Grupo -16", linkedParent: "comA@g.us" },
+    "2@g.us": { subject: "Niños NR", linkedParent: "comA@g.us" },
+    "3@g.us": { subject: "Otro clan", linkedParent: "comB@g.us" },
+  };
+  const metaFetch = async () => ({
+    subject: "Lobby NR",
+    linkedParent: "comA@g.us",
+    participants: [{ id: "573000000077@s.whatsapp.net", admin: "admin" }],
+  });
+
+  const { ctx } = makeCtxWithSender(77, { commandBody: "agregar", getGroupMetadata: metaFetch });
+  const base = { ...ctx.services, listGroups: async () => groups, getGroupMetadata: metaFetch };
+
+  const wizard = await handler({ ...ctx, isCommand: true, command: "rutas", args: ["agregar"], services: base });
+  assert.match(wizard, /Comunidad: Lobby NR|Comunidad: comA@g.us/);
+  assert.match(wizard, /Grupo -16/);
+  assert.match(wizard, /Niños NR/);
+  assert.strictEqual(wizard.includes("Otro clan"), false);
+
+  const lista = await handler({ ...ctx, isCommand: true, command: "rutas", args: ["grupos"], commandBody: "grupos", services: base });
+  assert.match(lista, /Grupos de esta comunidad/);
+  assert.strictEqual(lista.includes("Otro clan"), false);
 });
