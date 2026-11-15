@@ -115,8 +115,9 @@ export function resolveFichaTargets(routes, form, values, { scope = "" } = {}) {
   // `scope` (creadas antes de esto) se mantienen globales.
   const active = (routes || []).filter((route) => {
     if (!route?.jid || route.enabled === false) return false;
-    if (!route.scope) return true;
-    return !scope || route.scope === scope;
+    if (!route.scope) return true; // ruta global (grupos sin comunidad de WhatsApp)
+    if (!scope) return false; // la ficha no viene de una comunidad: no se mezcla
+    return route.scope === scope;
   });
   const conditional = active.filter((route) => (route.conditions || []).length);
   const wildcards = active.filter((route) => !(route.conditions || []).length);

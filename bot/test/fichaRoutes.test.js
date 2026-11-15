@@ -115,6 +115,15 @@ test("resolveFichaTargets: no mezcla comunidades distintas", () => {
   assert.deepStrictEqual(result.sends.map((s) => s.jid), ["1@g.us"]);
 });
 
+test("resolveFichaTargets: una ficha sin comunidad no entra en rutas de comunidad", () => {
+  const routes = [
+    { name: "comunidad", jid: "1@g.us", scope: "comunidadA", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "global", jid: "2@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+  ];
+  const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "" });
+  assert.deepStrictEqual(result.sends.map((s) => s.jid), ["2@g.us"]);
+});
+
 test("resolveFichaTargets: las rutas antiguas sin scope siguen valiendo", () => {
   const routes = [{ name: "vieja", jid: "7@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] }];
   const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "comunidadA" });

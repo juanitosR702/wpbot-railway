@@ -467,7 +467,7 @@ async function deliverByRoutes(ctx, store, session) {
 
   // Solo cuentan las rutas de la comunidad donde se llenó la ficha.
   const meta = await safeGroupMetadata(ctx);
-  const scope = meta?.linkedParent || `${ctx.phone}@g.us`;
+  const scope = meta?.linkedParent || "";
   const { sends, fallback } = resolveFichaTargets(routes, session.form, session.values, { scope });
   if (!sends.length) return { notes: [] };
 
@@ -806,9 +806,11 @@ async function manageRoutes(ctx, store, options) {
     // Cada ruta queda atada a la comunidad del grupo donde se ejecuta, para que
     // dos comunidades no se mezclen (si el grupo no está en ninguna, la clave
     // es el propio grupo).
+    // `scope` solo existe si el grupo pertenece a una Comunidad de WhatsApp; si
+    // no, la ruta queda global (comportamiento clásico del bot).
     const meta = await safeGroupMetadata(ctx);
     const jid = `${ctx.phone}@g.us`;
-    const scope = meta?.linkedParent || jid;
+    const scope = meta?.linkedParent || "";
     const route = store.addRoute({
       name,
       jid,
