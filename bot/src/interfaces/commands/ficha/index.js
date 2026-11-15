@@ -436,6 +436,24 @@ async function tryAddToGroup(ctx, jid) {
   return false;
 }
 
+function currentGroupJid(ctx) {
+  const phone = String(ctx.phone || "").trim();
+  return phone.endsWith("@g.us") ? phone : `${phone}@g.us`;
+}
+
+async function groupNamesFor(ctx, jids) {
+  const names = {};
+  for (const jid of jids) {
+    try {
+      const meta = await ctx.services?.getGroupMetadata?.(jid);
+      if (meta?.subject) names[jid] = meta.subject;
+    } catch {
+      // Sin nombre disponible.
+    }
+  }
+  return names;
+}
+
 async function groupNames(ctx, routes) {
   const names = {};
   for (const route of routes) {
@@ -767,7 +785,7 @@ async function setDestination(ctx, store, options) {
   // JID del grupo: enviar a un número suelto lo trataría como chat privado.
   const raw = String(ctx.commandBody || "").trim();
   const explicit = raw.match(/(\d{10,})@g\.us/)?.[1] || null;
-  const destination = explicit ? `${explicit}@g.us` : `${ctx.phone}@g.us`;
+  const destination = explicit ? `${explicit}@g.us` : currentGroupJid(ctx);
 
   store.setDestination(destination);
   await store.save();
@@ -797,9 +815,19 @@ async function manageRoutes(ctx, store, options) {
 
   if (!action || ["ver", "lista", "listar"].includes(action)) {
     const meta = await safeGroupMetadata(ctx);
+    const names = await groupNames(ctx, routes);
+    const communities = await groupNamesFor(ctx, [...new Set(routes.map((route) => route.scope).filter(Boolean))]);
+    for (const [scope, subject] of Object.entries(await groupNamesFor(ctx, meta?.linkedParent ? [meta.linkedParent] : []))) {
+      communities[scope] = subject;
+    }
     return renderRoutes(routes, {
-      names: await groupNames(ctx, routes),
-      origin: { jid: `${ctx.phone}@g.us`, scope: meta?.linkedParent || "" },
+      names,
+      communities,
+      origin: {
+        jid: currentGroupJid(ctx),
+        name: meta?.subject || "",
+        scope: meta?.linkedParent || "",
+      },
     });
   }
 
@@ -810,34 +838,43 @@ async function manageRoutes(ctx, store, options) {
   }
 
   if (["quitar", "off", "borrar", "del", "remove"].includes(action)) {
-    const name = String(ctx.commandBody || "").trim().split(/\s+/).slice(1).join(" ").trim();
-    if (!name) return "Uso: *!rutas quitar <nombre>*";
-    const removed = store.removeRoute(name);
-    if (!removed) return `⚠️ No encontré ninguna ruta llamada «${name}».`;
+    const raw = String(ctx.commandBody || "").trim().split(/\s+/).slice(1).join(" ").trim();
+    if (!raw) return "Uso: *!rutas quitar <nombre del grupo>* (o *!rutas quitar aqui*)";
+    const jid = currentGroupJid(ctx);
+    const names = await groupNames(ctx, routes);
+    const key = normalize(raw);
+    const target = routes.find((route) => (
+      normalize(route.name) === key
+      || normalize(names[route.jid] || "") === key
+      || route.jid === raw
+      || (key === "aqui" && route.jid === jid)
+    ));
+    if (!target) return `⚠️ No encontré ninguna ruta que coincida con «${raw}».\nMíralas con *!rutas ver*.`;
+    store.removeRoute(target.name || target.jid);
     await store.save();
-    return `🗑️ Ruta «${name}» eliminada.`;
+    return `🗑️ Ruta *${target.name}* eliminada (${names[target.jid] || target.jid}).`;
   }
 
   if (["aqui", "add", "agregar", "anadir"].includes(action)) {
     const tokens = String(ctx.commandBody || "").trim().split(/\s+/).filter(Boolean);
-    const name = tokens[1];
-    if (!name) {
-      return [
-        "Uso: *!rutas aqui <nombre> [condiciones]*",
-        "",
-        "Ejemplos:",
-        "• *!rutas aqui teens edad<16*  (o *edad=13-15*)",
-        "• *!rutas aqui adultos edad>=16 link=https://chat.whatsapp.com/XXXX*",
-        "• *!rutas aqui otros*  (comodín: los que no encajen)",
-        "",
-        "El bot intenta *añadir* a la persona a ese grupo. Si WhatsApp no lo permite,",
-        "le manda el link por privado: el del grupo o el que pongas con *link=*.",
-      ].join("\n");
+    const meta = await safeGroupMetadata(ctx);
+    const jid = currentGroupJid(ctx);
+    const groupName = String(meta?.subject || "").trim();
+    const scope = meta?.linkedParent || "";
+
+    // El nombre es opcional: si no se pone, o si lo que sigue ya es una
+    // condición, la ruta se llama igual que el grupo. Nada de inventar nombres.
+    let name = tokens[1] || "";
+    const firstIsCondition = Boolean(name) && (/link=/i.test(name) || /[=<>]/.test(name) || /^\d+-\d+$/.test(name));
+    let rest = tokens.slice(2);
+    if (!name || firstIsCondition) {
+      name = groupName || "ruta";
+      rest = tokens.slice(1);
     }
 
     const conditions = [];
     let invite = "";
-    for (const token of tokens.slice(2)) {
+    for (const token of rest) {
       const linkMatch = token.match(/^link=(.+)$/i);
       if (linkMatch) {
         const value = linkMatch[1].trim();
@@ -849,19 +886,11 @@ async function manageRoutes(ctx, store, options) {
       }
       const parsed = parseRouteCondition(token);
       if (!parsed) {
-        return `⚠️ No entendí la condición «${token}».\nUsa *campo=valor* (ej: *edad=13-17*, *pais=colombia|mexico*) o *link=<url>*.`;
+        return `⚠️ No entendí «${token}».\nUsa *campo=valor* (ej: *edad<16*, *pais=colombia|mexico*) o *link=<url>*.`;
       }
       conditions.push(parsed);
     }
 
-    // Cada ruta queda atada a la comunidad del grupo donde se ejecuta, para que
-    // dos comunidades no se mezclen (si el grupo no está en ninguna, la clave
-    // es el propio grupo).
-    // `scope` solo existe si el grupo pertenece a una Comunidad de WhatsApp; si
-    // no, la ruta queda global (comportamiento clásico del bot).
-    const meta = await safeGroupMetadata(ctx);
-    const jid = `${ctx.phone}@g.us`;
-    const scope = meta?.linkedParent || "";
     const route = store.addRoute({
       name,
       jid,
@@ -873,22 +902,28 @@ async function manageRoutes(ctx, store, options) {
     });
     await store.save();
 
+    const nombreGrupo = groupName || jid;
+    const detalle = conditions.length
+      ? `Recibirá las fichas que cumplan: ${conditions.map((c) => (c.type === "range" ? `${c.field} ${c.min}-${c.max}` : `${c.field} = ${c.values.join(" / ")}`)).join(" · ")}`
+      : "Recibirá las fichas que no encajen en ninguna otra ruta (comodín).";
+
     try {
       await ctx.services.sendMessage(jid, {
-        text: conditions.length
-          ? `📥 *Ruta «${route.name}» guardada.*\nRecibirá las fichas que cumplan: ${conditions.map((c) => (c.type === "range" ? `${c.field} ${c.min}-${c.max}` : `${c.field} = ${c.values.join(" / ")}`)).join(" · ")}`
-          : `📥 *Ruta «${route.name}» guardada como comodín.*\nRecibirá las fichas que no encajen en ninguna otra ruta.`,
+        text: `📥 *Ruta «${route.name}» guardada.*\n${detalle}`,
       });
     } catch (err) {
       return `⚠️ Guardé la ruta, pero no pude escribir en este grupo: ${err?.message || err}`;
     }
 
     const total = typeof store.routes === "function" ? store.routes().length : routes.length;
-    const comunidad = route.scope && route.scope !== jid ? "\n🏘 Queda ligada a esta comunidad." : "";
-    return `✅ Ruta *${route.name}* activa en este grupo (${total} en total).${comunidad}\nMíralas con *!rutas ver*.`;
+    return [
+      `✅ Ruta *${route.name}* activa en *${nombreGrupo}* (${total} en total).`,
+      scope ? "" : "_Este grupo no está en una comunidad: la ruta vale para todas las fichas._",
+      `Míralas con *!rutas ver*.`,
+    ].filter(Boolean).join("\n");
   }
 
-  return "Uso: *!rutas ver*, *!rutas aqui <nombre> [condiciones]*, *!rutas quitar <nombre>* o *!rutas limpiar*.";
+  return "Uso: *!rutas ver*, *!rutas aqui [nombre] [condiciones]*, *!rutas quitar <grupo>* o *!rutas limpiar*.";
 }
 
 async function safeGroupMetadata(ctx) {

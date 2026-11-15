@@ -329,3 +329,54 @@ test("ficha: sin rutas configuradas no intenta añadir a nadie", async () => {
   assert.strictEqual(sent.at(-1).jid, DESTINATION);
   assert.match(done, /Ficha enviada/);
 });
+
+// ---- Rutas identificadas por el nombre del grupo ----
+
+test("rutas: !rutas aqui sin nombre usa el nombre del grupo", async () => {
+  const routes = [];
+  const store = fakeStore({
+    routes: () => routes,
+    addRoute: (route) => {
+      routes.push(route);
+      return route;
+    },
+  });
+  const handler = await setup(store);
+  const { ctx } = makeCtxWithSender(51, { commandBody: "aqui edad<16" });
+
+  const reply = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["aqui", "edad<16"],
+  });
+
+  assert.strictEqual(routes.length, 1);
+  assert.strictEqual(routes[0].name, "Clan"); // subject del grupo en el harness
+  assert.deepStrictEqual(routes[0].conditions, [{ field: "edad", type: "range", min: 0, max: 15 }]);
+  assert.match(reply, /activa en \*Clan\*/);
+});
+
+test("rutas: !rutas quitar aqui borra la ruta de este grupo", async () => {
+  const routes = [{ name: "Clan", jid: ORIGIN, conditions: [] }];
+  let removed = null;
+  const store = fakeStore({
+    routes: () => routes,
+    removeRoute: (key) => {
+      removed = key;
+      return true;
+    },
+  });
+  const handler = await setup(store);
+  const { ctx } = makeCtxWithSender(52, { commandBody: "quitar aqui" });
+
+  const reply = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["quitar", "aqui"],
+  });
+
+  assert.strictEqual(removed, "Clan");
+  assert.match(reply, /eliminada/);
+});

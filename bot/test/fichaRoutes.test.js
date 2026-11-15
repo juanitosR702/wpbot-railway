@@ -140,7 +140,8 @@ test("renderRoutes: explica cómo crear la primera ruta", () => {
   const texto = renderRoutes([{ name: "teens", jid: "1@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] }]);
   assert.match(texto, /teens/);
   assert.match(texto, /13–17/);
-  assert.match(texto, /nombre no disponible/);
+  // Sin nombre resuelto se muestra el JID, nunca un texto raro.
+  assert.match(texto, /1@g\.us/);
   const conOrigen = renderRoutes(
     [{ name: "t", jid: "1@g.us", scope: "comunidadA", conditions: [] }],
     { origin: { jid: "9@g.us", scope: "" } },
@@ -148,4 +149,21 @@ test("renderRoutes: explica cómo crear la primera ruta", () => {
   assert.match(conOrigen, /ninguna \(grupo suelto\)/);
   assert.match(conOrigen, /otra comunidad/);
   assert.match(renderRoutes([{ name: "t", jid: "1@g.us", conditions: [] }], { names: { "1@g.us": "Clan Teens" } }), /Clan Teens/);
+
+  // Con nombre de grupo, el JID deja de aparecer.
+  const conNombre = renderRoutes(
+    [{ name: "t", jid: "1@g.us", conditions: [] }],
+    { names: { "1@g.us": "Clan Teens" } },
+  );
+  assert.strictEqual(conNombre.includes("1@g.us"), false);
+  assert.match(conNombre, /🏷 Clan Teens/);
+});
+
+test("renderRoutes: muestra el nombre de la comunidad, no su JID", () => {
+  const texto = renderRoutes(
+    [{ name: "t", jid: "1@g.us", scope: "com@g.us", conditions: [] }],
+    { names: { "1@g.us": "Grupo" }, communities: { "com@g.us": "Ghost Dragons" } },
+  );
+  assert.match(texto, /Comunidad: Ghost Dragons/);
+  assert.strictEqual(texto.includes("com@g.us"), false);
 });

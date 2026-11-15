@@ -148,7 +148,7 @@ export function describeCondition(condition) {
 }
 
 /** Listado de rutas configuradas. */
-export function renderRoutes(routes, { names = {}, origin = null } = {}) {
+export function renderRoutes(routes, { names = {}, communities = {}, origin = null } = {}) {
   const list = routes || [];
   if (!list.length) {
     return [
@@ -169,19 +169,30 @@ export function renderRoutes(routes, { names = {}, origin = null } = {}) {
       : "comodín (recibe las que no encajen)";
     const estado = route.enabled === false ? " ⏸" : "";
     const link = /^https?:/i.test(String(route.invite || "")) ? "link fijo" : "link automático";
-    const nombreGrupo = names[route.jid] || "(nombre no disponible)";
-    const comunidad = route.scope && route.scope !== route.jid ? " · comunidad" : "";
-    lines.push(`${index + 1}. *${route.name || "sin nombre"}*${estado} — ${detalle}`);
-    lines.push(`   🏷 ${nombreGrupo}`);
-    lines.push(`   ${route.jid}${comunidad}`);
+    const nombreGrupo = names[route.jid] || "";
+    // Se identifica por el nombre del grupo; el JID solo si no hay nombre.
+    lines.push(`${index + 1}. *${route.name || nombreGrupo || "sin nombre"}*${estado} — ${detalle}`);
+    if (nombreGrupo && route.name && normalizeRouteText(nombreGrupo) !== normalizeRouteText(route.name)) {
+      lines.push(`   🏷 ${nombreGrupo}`);
+    }
+    if (!nombreGrupo) lines.push(`   🏷 ${route.jid}`);
+    if (route.scope && route.scope !== route.jid) {
+      const comunidad = communities[route.scope];
+      lines.push(`   🏘 ${comunidad ? `Comunidad: ${comunidad}` : route.scope}`);
+    }
     lines.push(`   🔗 ${link}`);
   });
   lines.push("", "La ficha se publica en el grupo de almacén y el bot añade a la persona");
   lines.push("a todos los grupos de *su misma comunidad* cuyas condiciones se cumplan.");
 
   if (origin?.jid) {
-    lines.push("", "─────", `📍 Este grupo: ${origin.jid}`);
-    lines.push(origin.scope ? `🏘 Comunidad: ${origin.scope}` : "🏘 Comunidad: ninguna (grupo suelto)");
+    lines.push("", "─────", `📍 Este grupo: ${origin.name || origin.jid}`);
+    if (!origin.scope) {
+      lines.push("🏘 Comunidad: ninguna (grupo suelto)");
+    } else {
+      const comunidad = communities[origin.scope];
+      lines.push(`🏘 Comunidad: ${comunidad || origin.scope}`);
+    }
     const scopes = [...new Set(list.map((route) => route.scope || ""))];
     const ajenas = scopes.filter((scope) => scope && scope !== origin.scope);
     if (ajenas.length) {
