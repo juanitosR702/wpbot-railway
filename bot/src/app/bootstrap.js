@@ -21,13 +21,9 @@ import { AntiNsfwStore } from "../infrastructure/storage/antiNsfwStore.js";
 import { aiPlugin } from "../interfaces/commands/ai/index.js";
 import { casinoPlugin } from "../interfaces/commands/casino/index.js";
 import { economyPlugin } from "../interfaces/commands/economy/index.js";
-import { groupAdminPlugin, handleGroupParticipantsUpdate, groupWelcomeTemplate } from "../interfaces/commands/groupAdmin/index.js";
-import { fichaPlugin, autoStartFicha } from "../interfaces/commands/ficha/index.js";
-import { ingresoPlugin } from "../interfaces/commands/ingreso/index.js";
-import { defaultWelcomeText, groupIdOf, onJoinRequest, onParticipantsUpdate } from "../shared/utils/autoIngreso.js";
-import { pickExcuse, reviewFicha } from "../shared/utils/ingresoFilters.js";
-import { renderWelcomeTemplate } from "../shared/utils/welcomeTemplate.js";
-import { getIngresoStore } from "../infrastructure/storage/ingresoStore.js";
+import { groupAdminPlugin, handleGroupParticipantsUpdate } from "../interfaces/commands/groupAdmin/index.js";
+import { fichaPlugin } from "../interfaces/commands/ficha/index.js";
+import { lobbyPlugin } from "../interfaces/commands/lobby/index.js";
 import { helpPlugin } from "../interfaces/commands/help/index.js";
 import { levelsPlugin } from "../interfaces/commands/levels/index.js";
 import { moderationPlugin } from "../interfaces/commands/moderation/index.js";
@@ -41,6 +37,8 @@ import { minecraftPlugin } from "../interfaces/commands/minecraft/index.js";
 import { benchPlugin } from "../interfaces/commands/bench/index.js";
 import { getGroupSettingsStore } from "../infrastructure/storage/groupSettingsStore.js";
 import { GROUP_CONFIG_COMMANDS } from "../shared/config/modules.js";
+import { createLobbyFlow, LOBBY_DEFAULTS } from "../shared/utils/lobbyFlow.js";
+import { getLobbyStore } from "../infrastructure/storage/lobbyStore.js";
 
 // From the bot working directory this resolves to the repository's bridge/auth.
 // Containers override it with AUTH_DIR=/app/bridge/auth.
@@ -125,6 +123,9 @@ let currentQr = null;
 let currentQrAt = 0;
 let qrServer = null;
 let shuttingDown = false;
+// Flujo lobby -> general; se crea en `ready` y el plugin de fichas lo usa como
+// gancho al terminar una ficha.
+let lobbyFlow = null;
 const startedAt = Date.now();
 
 function formatUptime(milliseconds) {
@@ -296,90 +297,15 @@ const coreCommandsPlugin = {
   },
 };
 
-// ---- Ingreso automático (Lobby -> General) ----
-//
-// Configuración en Mongo (`ingreso_settings`): lobby, general, delayMs, enabled.
-// Se lee en cada evento para que `!ingreso on|off|delay` aplique al instante.
-const ingresoStore = getIngresoStore();
-
-async function ingresoConfig() {
-  try {
-    await ingresoStore.ready();
-  } catch (err) {
-    console.warn("[ingreso] sin Mongo, flujo desactivado:", err?.message || err);
-  }
-  return ingresoStore.config();
-}
-
-async function groupInviteLink(groupJid) {
-  try {
-    const code = await connection.sock?.groupInviteCode(groupJid);
-    return code ? `https://chat.whatsapp.com/${code}` : "";
-  } catch (err) {
-    console.warn("[ingreso] no se pudo obtener el enlace del grupo:", err?.message || err);
-    return "";
-  }
-}
-
-// Saca a alguien del Lobby. Best-effort: si ya no está, WhatsApp lo rechaza y
-// no hay nada que arreglar.
-async function removeFromLobby(participant) {
-  const config = await ingresoConfig();
-  if (!config.lobby || !connection.sock) return;
-  try {
-    await connection.sock.groupParticipantsUpdate(`${config.lobby}@g.us`, [participant], "remove");
-    console.log(`[ingreso] fuera del Lobby: ${participant}`);
-  } catch (err) {
-    console.warn("[ingreso] no pude sacar del Lobby a", participant, "-", err?.message || err);
-  }
-}
-
-// Saludo con retraso: usa la plantilla del grupo (`!setwelcome`) si existe.
-async function sendLobbyWelcome(groupJid, participant) {
-  let metadata = null;
-  try {
-    metadata = await connection.sock?.groupMetadata(groupJid);
-  } catch {
-    metadata = null;
-  }
-  const template = await groupWelcomeTemplate(groupJid);
-  const vars = {
-    user: `@${String(participant).split("@")[0].split(":")[0]}`,
-    group: metadata?.subject || "el grupo",
-    count: metadata?.participants?.length,
-  };
-  const text = template
-    ? renderWelcomeTemplate(template, vars)
-    : defaultWelcomeText({ participant, groupName: metadata?.subject });
-  await connection.sendMessage(groupJid, { text, mentions: [participant] });
-}
-
-let wiredIngresoSock = null;
-
 router.registerPlugin(coreCommandsPlugin);
 router.registerPlugin(groupAdminPlugin, { ownerPolicy });
 router.registerPlugin(fichaPlugin, {
   ownerPolicy,
-  ingreso: {
-    getConfig: ingresoConfig,
-    inviteLink: groupInviteLink,
-    // Filtros de la ficha (edad, país, iniciales). Si no cumple, la persona
-    // recibe una excusa creíble en vez del enlace del grupo general.
-    review: async (form, values, ctx) => {
-      const config = await ingresoConfig();
-      const verdict = reviewFicha(form, values, config);
-      if (verdict.warnings.length) {
-        console.warn("[ingreso] aviso de filtros:", verdict.warnings.join(" | "));
-      }
-      return { ...verdict, excuse: pickExcuse(config.excuse, ctx?.sender || "") };
-    },
-  },
+  // Cuando una ficha termina en el lobby: marca a la persona como fichada y le
+  // manda el link del grupo general por privado.
+  onSubmitted: (ctx, info) => lobbyFlow?.onFichaSubmitted(ctx, info) ?? null,
 });
-router.registerPlugin(ingresoPlugin, {
-  ownerPolicy,
-  store: ingresoStore,
-  inviteLink: groupInviteLink,
-});
+router.registerPlugin(lobbyPlugin, { ownerPolicy });
 router.registerPlugin(ownerPlugin, { ownerPolicy, ownerRepository });
 router.registerPlugin(aiPlugin, { ownerRepository, ownerPolicy, router });
 router.registerPlugin(antiNsfwPlugin, { ownerPolicy });
@@ -466,12 +392,6 @@ connection.on("ready", async (user) => {
     handleGroupParticipantsUpdate(update, {
       sendMessage: (jid, content) => connection.sendMessage(jid, content),
       getGroupMetadata: (jid) => connection.sock?.groupMetadata(jid),
-    }, {
-      // En el Lobby el saludo lo manda el ingreso automático, ya con retraso.
-      skipWelcome: async () => {
-        const config = await ingresoConfig();
-        return config.enabled && update.action === "add" && groupIdOf(update.id) === config.lobby;
-      },
     }).catch((err) => console.error("[group_admin] Error en welcome/bye:", err));
   });
 
@@ -500,69 +420,74 @@ connection.on("ready", async (user) => {
     isBotAdmin: (getGroupMetadata, botJid, botLid) => ownerPolicy.isBotAdmin(getGroupMetadata, botJid, botLid),
   }).catch((err) => console.error("[autoPromote] Error en escaneo inicial:", err));
 
-  // Ingreso automático: se engancha una sola vez por socket (Baileys crea uno
-  // nuevo en cada reconexión, así que hay que volver a engancharlo).
-  if (wiredIngresoSock !== connection.sock) {
-    const sock = connection.sock;
-    wiredIngresoSock = sock;
+  // Flujo automático lobby -> general. Se inicializa una sola vez, aunque
+  // WhatsApp reconecte y `ready` se emita de nuevo.
+  if (!lobbyFlow) {
+    const lobbyStore = getLobbyStore();
 
-    sock?.ev?.on("group.join-request", (update) => {
-      ingresoConfig()
-        .then((config) => onJoinRequest(update, {
-          config,
-          approve: (jid, participant, action) =>
-            sock.groupRequestParticipantsUpdate(jid, [participant], action),
-          removeFromLobby,
-          logger: console,
-        }))
-        .catch((err) => console.error("[ingreso] Error en solicitud de unión:", err?.message || err));
+    async function startFichaFor(groupId, participantJid) {
+      const synthetic = {
+        key: {
+          remoteJid: groupId,
+          fromMe: false,
+          id: `lobby-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          participant: participantJid,
+        },
+        message: { conversation: `${PREFIX}ficha` },
+        pushName: participantJid,
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      };
+      const reply = await router.route(synthetic, buildServices());
+      if (reply) await connection.sendMessage(groupId, reply);
+    }
+
+    lobbyFlow = createLobbyFlow({
+      store: lobbyStore,
+      ownerPolicy,
+      sendMessage: (jid, content) => connection.sendMessage(jid, content),
+      getGroupMetadata: (jid) => connection.sock?.groupMetadata(jid),
+      approve: (jid, participants) => connection.sock?.groupRequestParticipantsUpdate(jid, participants, "approve"),
+      reject: (jid, participants) => connection.sock?.groupRequestParticipantsUpdate(jid, participants, "reject"),
+      listRequests: (jid) => connection.sock?.groupRequestParticipantsList(jid),
+      removeParticipants: (jid, participants) => connection.sock?.groupParticipantsUpdate(jid, participants, "remove"),
+      inviteCode: (jid) => connection.sock?.groupInviteCode(jid),
+      revokeInvite: (jid) => connection.sock?.groupRevokeInvite(jid),
+      startFicha: startFichaFor,
+      botJid: () => connection.sock?.user?.id,
+      botLid: () => connection.sock?.user?.lid,
+      logger: console,
     });
 
-    sock?.ev?.on("group-participants.update", (update) => {
-      ingresoConfig()
-        .then((config) => onParticipantsUpdate(update, {
-          config,
-          welcome: (jid, participant) => sendLobbyWelcome(jid, participant),
-          startFicha: (jid, participant) => autoStartFicha({
-            groupJid: jid,
-            participant,
-            sendMessage: (target, content) => sock.sendMessage(target, content),
-            sendList: (target, payload) => connection.sendList(target, payload),
-            getGroupMetadata: (target) => sock.groupMetadata(target),
-            services: { sendMessage: (target, content) => sock.sendMessage(target, content) },
-          }),
-          removeFromLobby,
-          logger: console,
-        }))
-        .catch((err) => console.error("[ingreso] Error en evento de grupo:", err?.message || err));
+    lobbyStore.ready().catch((err) => console.error("[lobby] store:", err?.message || err));
+
+    connection.sock?.ev?.on("group.join-request", (update) => {
+      lobbyFlow.handleJoinRequest(update)
+        .catch((err) => console.error("[lobby] Error en solicitud de entrada:", err));
     });
 
-    console.log("[ingreso] flujo automático enganchado al socket.");
+    connection.sock?.ev?.on("group-participants.update", (update) => {
+      lobbyFlow.handleParticipantsUpdate(update)
+        .catch((err) => console.error("[lobby] Error en entrada/salida:", err));
+    });
+
+    // Repaso de solicitudes que llegaron con el bot dormido (Railway free).
+    const pollMs = Math.max(15000, Number(env("LOBBY_POLL_MS", LOBBY_DEFAULTS.pollMs)) || LOBBY_DEFAULTS.pollMs);
+    const syncTimer = setInterval(() => {
+      lobbyFlow.sync().catch((err) => console.warn("[lobby] sync:", err?.message || err));
+    }, pollMs);
+    syncTimer.unref?.();
+    const initialSync = setTimeout(() => {
+      lobbyFlow.sync().catch((err) => console.warn("[lobby] sync inicial:", err?.message || err));
+    }, 5000);
+    initialSync.unref?.();
   }
 });
 
-connection.on("message", async (msg) => {
-  if (!msg.key?.fromMe && msg.message) {
-    const viewOnce = viewOnceMedia(msg.message);
-    if (viewOnce) {
-      try {
-        const buffer = await downloadMediaMessage(msg, "buffer", {}, {
-          logger: console,
-          reuploadRequest: (message) => connection.sock?.updateMediaMessage(message),
-        });
-        await connection.sendMessage(msg.key.remoteJid, {
-          [viewOnce.content.videoMessage ? "video" : "image"]: buffer,
-          mimetype: viewOnce.media.mimetype,
-          caption: viewOnce.media.caption || "",
-        });
-        console.log(`[view-once] Reenviado: ${msg.key.id}`);
-      } catch (error) {
-        console.warn("[view-once] No se pudo reenviar el archivo:", error?.message || error);
-      }
-    }
-  }
-
-  const reply = await router.route(msg, {
+// Servicios del router. Se arman aparte para reutilizarlos en los mensajes
+// sintéticos: el lobby arranca la ficha reinyectando un `!ficha` como si la
+// persona lo hubiera escrito (mismo patrón que usa la IA con `commandRunner`).
+function buildServices() {
+  return {
     sendMessage: (jid, content) => connection.sendMessage(jid, content),
     sendList: (jid, payload) => connection.sendList(jid, payload),
     deleteMessage: (jid, key) => connection.sock?.sendMessage(jid, { delete: key }),
@@ -590,7 +515,31 @@ connection.on("message", async (msg) => {
         logger: console,
         reuploadRequest: (message) => connection.sock?.updateMediaMessage(message),
       }),
-  });
+  };
+}
+
+connection.on("message", async (msg) => {
+  if (!msg.key?.fromMe && msg.message) {
+    const viewOnce = viewOnceMedia(msg.message);
+    if (viewOnce) {
+      try {
+        const buffer = await downloadMediaMessage(msg, "buffer", {}, {
+          logger: console,
+          reuploadRequest: (message) => connection.sock?.updateMediaMessage(message),
+        });
+        await connection.sendMessage(msg.key.remoteJid, {
+          [viewOnce.content.videoMessage ? "video" : "image"]: buffer,
+          mimetype: viewOnce.media.mimetype,
+          caption: viewOnce.media.caption || "",
+        });
+        console.log(`[view-once] Reenviado: ${msg.key.id}`);
+      } catch (error) {
+        console.warn("[view-once] No se pudo reenviar el archivo:", error?.message || error);
+      }
+    }
+  }
+
+  const reply = await router.route(msg, buildServices());
 
   if (reply) {
     const maxAttempts = 4;

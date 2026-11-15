@@ -1,4 +1,4 @@
-import { YouTubeDownloader } from "../../../infrastructure/youtube/downloader.js";
+import { YouTubeDownloader, describeYtDlpError } from "../../../infrastructure/youtube/downloader.js";
 
 const COMMANDS = new Set(["song", "musica", "music"]);
 
@@ -34,8 +34,9 @@ function makeHandler() {
 
       return null;
     } catch (err) {
-      console.error("[song] Error:", err?.message || err);
-      return `No pude descargar la canción 😕\n${err.message || "error desconocido"}`;
+      const detail = String(err?.stderr || "").trim().split("\n").slice(-3).join(" | ");
+      console.error("[song] Error:", detail || err?.message || err);
+      return `No pude descargar la canción 😕\n${describeYtDlpError(err)}`;
     }
   };
 }

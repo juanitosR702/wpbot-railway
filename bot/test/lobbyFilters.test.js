@@ -4,12 +4,13 @@ import assert from "node:assert";
 import {
   DEFAULT_EXCUSES,
   fieldValue,
+  hasFilters,
   nameInitials,
   parseAge,
   pickExcuse,
   renderFilters,
   reviewFicha,
-} from "../src/shared/utils/ingresoFilters.js";
+} from "../src/shared/utils/lobbyFilters.js";
 
 const FORM = {
   header: "FICHA",
@@ -115,4 +116,12 @@ test("filtros: resumen legible para el admin", () => {
     renderFilters({ minAge: 18, countries: ["Colombia"], initials: ["a"] }),
     /edad ≥ 18.*Colombia.*A/,
   );
+});
+
+test("filtros: hasFilters detecta si hay alguno activo", () => {
+  assert.strictEqual(hasFilters({}), false);
+  assert.strictEqual(hasFilters({ minAge: 0, countries: [], initials: [] }), false);
+  assert.strictEqual(hasFilters({ minAge: 18 }), true);
+  assert.strictEqual(hasFilters({ countries: ["Perú"] }), true);
+  assert.strictEqual(hasFilters({ initials: ["z"] }), true);
 });

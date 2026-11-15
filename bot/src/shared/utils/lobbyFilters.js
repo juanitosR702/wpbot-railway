@@ -1,8 +1,8 @@
-// Filtros de ingreso sobre la ficha terminada.
+// Filtros de admisión sobre la ficha terminada del Lobby.
 //
-// Se aplican solo en el Lobby y solo si el flujo de ingreso está activo. La
-// persona no ve el motivo real: recibe una excusa creíble (cupo lleno, lista de
-// espera) para que no pueda adaptar sus respuestas y volver a intentarlo.
+// Se aplican solo en el Lobby y solo si el flujo está activo. La persona no ve
+// el motivo real: recibe una excusa creíble (cupo lleno, lista de espera) para
+// que no pueda adaptar sus respuestas y volver a intentarlo.
 //
 // Todo aquí es puro (sin Mongo ni WhatsApp) para poder testearlo.
 
@@ -125,7 +125,16 @@ export function pickExcuse(custom, seed = "") {
   return DEFAULT_EXCUSES[hash % DEFAULT_EXCUSES.length];
 }
 
-/** Resumen de una línea para `!ingreso ver` / `!ingreso filtros`. */
+/** ¿Hay algún filtro activo? (para decidir si la excusa sustituye al aviso genérico) */
+export function hasFilters(filters = {}) {
+  return (
+    Number(filters.minAge) > 0 ||
+    Boolean(filters.countries?.length) ||
+    Boolean(filters.initials?.length)
+  );
+}
+
+/** Resumen de una línea para `!lobby ver` / `!lobby filtros`. */
 export function renderFilters(filters = {}) {
   const parts = [];
   const minAge = Number(filters.minAge) || 0;

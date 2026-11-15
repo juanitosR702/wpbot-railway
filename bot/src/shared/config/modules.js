@@ -18,6 +18,7 @@ export const GROUP_MODULES = [
   { key: "musica", plugin: "song", label: "Música" },
   { key: "imagen", plugin: "toimage", label: "Sticker a imagen" },
   { key: "fichas", plugin: "fichas", label: "Fichas de ingreso" },
+  { key: "lobby", plugin: "lobby", label: "Lobby automático" },
   { key: "minecraft", plugin: "minecraft", label: "Minecraft" },
   { key: "utilidades", plugin: "core-commands", label: "Utilidades" },
   { key: "ayuda", plugin: "help", label: "Ayuda" },
