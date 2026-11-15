@@ -48,13 +48,17 @@ export class FichaStore extends BaseStore {
     return Array.isArray(this.state.routes) ? this.state.routes : [];
   }
 
-  /** Añade o reemplaza la ruta con el mismo nombre (o el mismo JID y nombre). */
+  /**
+   * Añade o reemplaza la ruta del mismo grupo, o la que tenga el mismo nombre.
+   * Un grupo de destino tiene una sola ruta: volver a ejecutar `!rutas aqui`
+   * la actualiza en vez de duplicarla.
+   */
   addRoute(route) {
     if (!Array.isArray(this.state.routes)) this.state.routes = [];
     const key = String(route?.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
     const index = this.state.routes.findIndex((item) => {
       const itemKey = String(item?.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-      return itemKey === key;
+      return itemKey === key || (route.jid && item?.jid === route.jid);
     });
     const entry = {
       id: route.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
