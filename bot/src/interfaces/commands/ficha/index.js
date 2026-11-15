@@ -14,6 +14,11 @@ import {
   rowTitle,
   validateFichaValues,
 } from "../../../shared/utils/fichaForm.js";
+import {
+  parseRouteCondition,
+  renderRoutes,
+  resolveFichaTargets,
+} from "../../../shared/utils/fichaRoutes.js";
 
 // Sesiones en memoria: cada persona llena su ficha en su propio chat/grupo.
 // Sin Mongo a propósito: si el bot reinicia, la ficha a medias se pierde y se
@@ -101,9 +106,10 @@ export const fichaPlugin = {
       if (ctx.command === "ficha") return startFicha(ctx, store);
       if (ctx.command === "setficha") return configure(ctx, store, options);
       if (ctx.command === "fichadestino") return setDestination(ctx, store, options);
+      if (ctx.command === "rutas" || ctx.command === "ruta") return manageRoutes(ctx, store, options);
       return null;
     }, {
-      commands: ["ficha", "setficha", "fichadestino"],
+      commands: ["ficha", "setficha", "fichadestino", "rutas"],
       category: "FICHAS",
     });
   },
@@ -118,8 +124,9 @@ async function startFicha(ctx, store) {
     return "⚠️ Ya tienes una ficha en curso. Escribe *cancelar* para salir.";
   }
 
-  if (!store.destination()) {
-    return "⚠️ Todavía no hay un grupo de almacenamiento de fichas.\nUn admin debe ejecutar *!fichadestino* en ese grupo.";
+  const hasRoutes = typeof store.routes === "function" && store.routes().length > 0;
+  if (!hasRoutes && !store.destination()) {
+    return "⚠️ Todavía no hay un grupo de almacenamiento de fichas.\nUn admin debe ejecutar *!fichadestino* en ese grupo o crear rutas con *!rutas aqui <nombre>*.";
   }
 
   const form = store.form(ctx.phone) || DEFAULT_FICHA;
@@ -351,9 +358,17 @@ async function submitFicha(ctx, store, session, options = {}) {
     return HALT;
   }
 
-  const destination = store.destination();
-  if (!destination) {
-    return "⚠️ No hay grupo de almacenamiento configurado. Un admin debe ejecutar *!fichadestino* en ese grupo.";
+  // Destinos: las rutas configuradas con *!rutas* ganan; si no hay ninguna o
+  // ninguna cumple las condiciones, se usa el almacén clásico (!fichadestino).
+  const routes = typeof store.routes === "function" ? store.routes() : [];
+  const resolved = resolveFichaTargets(routes, session.form, session.values);
+  let targets = resolved.sends;
+  if (!targets.length) {
+    const legacy = store.destination();
+    if (!legacy) {
+      return "⚠️ No hay grupos de destino configurados. Un admin debe crear rutas con *!rutas aqui <nombre>* o ejecutar *!fichadestino* en el grupo de almacén.";
+    }
+    targets = [{ jid: legacy, name: "" }];
   }
 
   const metadata = await safeGroupMetadata(ctx);
@@ -364,12 +379,19 @@ async function submitFicha(ctx, store, session, options = {}) {
     date: formatFichaDate(),
   });
 
-  try {
-    await ctx.services.sendMessage(destination, { text, mentions: [ctx.sender] });
-  } catch (err) {
-    console.error("[ficha] no se pudo enviar al grupo destino:", err?.message || err);
-    return "⚠️ No pude enviar la ficha al grupo de almacenamiento. Avisa a un admin.";
+  let delivered = 0;
+  for (const target of targets) {
+    try {
+      await ctx.services.sendMessage(target.jid, { text, mentions: [ctx.sender] });
+      delivered += 1;
+    } catch (err) {
+      console.error(`[ficha] no se pudo enviar a ${target.jid}:`, err?.message || err);
+    }
   }
+
+  if (!delivered) return "⚠️ No pude enviar la ficha a ningún grupo. Avisa a un admin.";
+
+  console.log(`[ficha] enviada a ${delivered}/${targets.length} destino(s)${resolved.fallback ? " (comodín)" : ""}`);
 
   dropSession(ctx, session);
 
@@ -382,7 +404,12 @@ async function submitFicha(ctx, store, session, options = {}) {
     console.warn("[ficha] error en el gancho onSubmitted:", err?.message || err);
   }
 
-  return ["✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!", extra]
+  const destino = delivered > 1
+    ? `${delivered} grupos`
+    : (targets[0]?.name ? `*${targets[0].name}*` : "el grupo de almacenamiento");
+  const parcial = delivered < targets.length ? `\n_(No pude entregarla en ${targets.length - delivered} grupo/s.)_` : "";
+
+  return [`✅ *Ficha enviada* a ${destino}. ¡Gracias!${parcial}`, extra]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -575,9 +602,11 @@ async function setDestination(ctx, store, options) {
 
   if (action === "ver" || action === "estado") {
     const destination = store.destination();
-    return destination
-      ? `📥 Las fichas se guardan en: ${destination}`
-      : "⚠️ No hay grupo de almacenamiento configurado.";
+    const routeCount = typeof store.routes === "function" ? store.routes().length : 0;
+    const lines = [];
+    lines.push(destination ? `📥 Almacén clásico: ${destination}` : "⚠️ Sin almacén clásico configurado.");
+    lines.push(routeCount ? `🧭 Rutas activas: ${routeCount} (ver *!rutas ver*)` : "🧭 Sin rutas: todas las fichas van al almacén clásico.");
+    return lines.join("\n");
   }
 
   if (["off", "quitar", "ninguno", "borrar"].includes(action)) {
@@ -606,6 +635,84 @@ async function setDestination(ctx, store, options) {
 
   const extra = explicit && explicit !== ctx.phone ? `\n\n_(Configurado desde otro grupo.)_` : "";
   return `✅ Listo. Las fichas se enviarán a este grupo.${extra}`;
+}
+
+// ---- Rutas de destino (varios grupos con condiciones) ----
+
+async function manageRoutes(ctx, store, options) {
+  if (!ctx.isGroup) return MSG.SOLO_GRUPOS;
+
+  const auth = await getAdmin(ctx, options.ownerPolicy);
+  if (!auth.ok) return auth.reason;
+
+  const action = normalize(ctx.args[0] || "");
+  const routes = typeof store.routes === "function" ? store.routes() : [];
+
+  if (!action || ["ver", "lista", "listar"].includes(action)) return renderRoutes(routes);
+
+  if (["limpiar", "reset", "vaciar"].includes(action)) {
+    store.clearRoutes();
+    await store.save();
+    return "♻️ Rutas de fichas eliminadas.";
+  }
+
+  if (["quitar", "off", "borrar", "del", "remove"].includes(action)) {
+    const name = String(ctx.commandBody || "").trim().split(/\s+/).slice(1).join(" ").trim();
+    if (!name) return "Uso: *!rutas quitar <nombre>*";
+    const removed = store.removeRoute(name);
+    if (!removed) return `⚠️ No encontré ninguna ruta llamada «${name}».`;
+    await store.save();
+    return `🗑️ Ruta «${name}» eliminada.`;
+  }
+
+  if (["aqui", "add", "agregar", "anadir"].includes(action)) {
+    const tokens = String(ctx.commandBody || "").trim().split(/\s+/).filter(Boolean);
+    const name = tokens[1];
+    if (!name) {
+      return [
+        "Uso: *!rutas aqui <nombre> [condiciones]*",
+        "",
+        "Ejemplos:",
+        "• *!rutas aqui teens edad=13-17*",
+        "• *!rutas aqui adultos edad=18-99*",
+        "• *!rutas aqui colombia pais=colombia*",
+        "• *!rutas aqui otros*  (comodín: recibe las que no encajen)",
+      ].join("\n");
+    }
+
+    const conditions = [];
+    for (const token of tokens.slice(2)) {
+      const parsed = parseRouteCondition(token);
+      if (!parsed) {
+        return `⚠️ No entendí la condición «${token}».\nUsa *campo=valor* (ej: *edad=13-17*, *pais=colombia|mexico*).`;
+      }
+      conditions.push(parsed);
+    }
+
+    const jid = `${ctx.phone}@g.us`;
+    const route = store.addRoute({
+      name,
+      jid,
+      conditions,
+      enabled: true,
+      updatedBy: ctx.sender,
+    });
+    await store.save();
+
+    try {
+      await ctx.services.sendMessage(jid, {
+        text: conditions.length
+          ? `📥 *Ruta «${route.name}» guardada.*\nRecibirá las fichas que cumplan: ${conditions.map((c) => (c.type === "range" ? `${c.field} ${c.min}-${c.max}` : `${c.field} = ${c.values.join(" / ")}`)).join(" · ")}`
+          : `📥 *Ruta «${route.name}» guardada como comodín.*\nRecibirá las fichas que no encajen en ninguna otra ruta.`,
+      });
+    } catch (err) {
+      return `⚠️ Guardé la ruta, pero no pude escribir en este grupo: ${err?.message || err}`;
+    }
+
+    return `✅ Ruta *${route.name}* activa en este grupo (${routes.length + 1} en total).\nMíralas con *!rutas ver*.`;
+  }
+
+  return "Uso: *!rutas ver*, *!rutas aqui <nombre> [condiciones]*, *!rutas quitar <nombre>* o *!rutas limpiar*.";
 }
 
 async function safeGroupMetadata(ctx) {

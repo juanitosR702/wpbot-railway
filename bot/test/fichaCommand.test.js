@@ -246,3 +246,52 @@ test("ficha: !fichadestino acepta un JID explícito", async () => {
 
   assert.deepStrictEqual(saved, ["120363000000000555@g.us"]);
 });
+
+// ---- Reparto a varios grupos (!rutas) ----
+
+const EDAD_FIELDS = {
+  header: "FICHA EDAD",
+  footer: "",
+  fields: [
+    { label: "Nombre", options: [] },
+    { label: "Edad", options: [] },
+  ],
+};
+
+async function fillFicha(handler, ctx, nombre, edad) {
+  await handler({ ...ctx, isCommand: true, command: "ficha" });
+  await handler({ ...ctx, text: nombre });
+  await handler({ ...ctx, text: edad });
+  return handler({ ...ctx, selection: "f:s" });
+}
+
+test("ficha: se envía a todos los grupos cuyas condiciones se cumplen", async () => {
+  const routes = [
+    { name: "teens", jid: "120363000000000111@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "ana", jid: "120363000000000222@g.us", conditions: [{ field: "Nombre", type: "values", values: ["Ana"] }] },
+    { name: "adultos", jid: "120363000000000333@g.us", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
+  ];
+  const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
+  const { ctx, sent } = makeCtxWithSender(31);
+
+  const done = await fillFicha(handler, ctx, "Ana", "17");
+  assert.match(done, /2 grupos/);
+
+  const jids = sent.filter((item) => item.jid !== ORIGIN).map((item) => item.jid).sort();
+  assert.deepStrictEqual(jids, ["120363000000000111@g.us", "120363000000000222@g.us"]);
+});
+
+test("ficha: cae al comodín cuando ninguna condición se cumple", async () => {
+  const routes = [
+    { name: "adultos", jid: "120363000000000333@g.us", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
+    { name: "otros", jid: "120363000000000444@g.us", conditions: [] },
+  ];
+  const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
+  const { ctx, sent } = makeCtxWithSender(32);
+
+  const done = await fillFicha(handler, ctx, "Ana", "17");
+  assert.match(done, /\*otros\*/);
+
+  const jids = sent.filter((item) => item.jid !== ORIGIN).map((item) => item.jid);
+  assert.deepStrictEqual(jids, ["120363000000000444@g.us"]);
+});

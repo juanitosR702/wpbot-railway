@@ -80,6 +80,7 @@ const INFO = {
     keywords: ["lobby", "admisión", "admission", "filtros", "edad mínima", "solo mayores", "países permitidos", "iniciales", "excusa", "cupo lleno", "grupo general"],
     groupOnly: true,
   },
+  rutas: { desc: "Reparte las fichas a varios grupos según sus datos (edad, país, etc.)", usage: "!rutas [ver | aqui <nombre> campo=valor | quitar <nombre> | limpiar]", level: A, keywords: ["rutas fichas", "repartir fichas", "grupos por edad", "destino fichas"], groupOnly: true, destructive: true },
   fichadestino: { desc: "Marca este grupo (o un JID) como almacén de fichas", usage: "!fichadestino [off|ver]", level: A, keywords: ["grupo fichas", "almacen fichas", "destino fichas"], groupOnly: true, destructive: true },
   tagall: { desc: "Menciona a todos los participantes", level: A, keywords: ["menciona a todos", "tag all", "avisa a todos"] },
   hidetag: { desc: "Menciona a todos sin mostrar el listado", level: A, keywords: ["menciona invisible", "hidetag"] },

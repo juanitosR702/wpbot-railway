@@ -1,7 +1,8 @@
 import BaseStore from "../database/baseStore.js";
 
 // Configuración de fichas:
-//   destination -> grupo donde se publican las fichas (global)
+//   destination -> grupo de respaldo si no hay rutas configuradas (global)
+//   routes[]    -> grupos de destino con condiciones (edad, país, …)
 //   forms[jid]  -> encabezado, campos y pie de la ficha de ese grupo
 //
 // Un documento por colección (`_id: "state"`), igual que el resto de stores.
@@ -11,7 +12,7 @@ export class FichaStore extends BaseStore {
   }
 
   _defaultState() {
-    return { destination: "", forms: {} };
+    return { destination: "", routes: [], forms: {} };
   }
 
   form(jid) {
@@ -41,6 +42,48 @@ export class FichaStore extends BaseStore {
 
   setDestination(jid) {
     this.state.destination = jid || "";
+  }
+
+  routes() {
+    return Array.isArray(this.state.routes) ? this.state.routes : [];
+  }
+
+  /** Añade o reemplaza la ruta con el mismo nombre (o el mismo JID y nombre). */
+  addRoute(route) {
+    if (!Array.isArray(this.state.routes)) this.state.routes = [];
+    const key = String(route?.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const index = this.state.routes.findIndex((item) => {
+      const itemKey = String(item?.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      return itemKey === key;
+    });
+    const entry = {
+      id: route.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: route.name || "",
+      jid: route.jid || "",
+      conditions: route.conditions || [],
+      enabled: route.enabled !== false,
+      updatedAt: Date.now(),
+      updatedBy: route.updatedBy || null,
+    };
+    if (index >= 0) this.state.routes[index] = entry;
+    else this.state.routes.push(entry);
+    return entry;
+  }
+
+  removeRoute(name) {
+    if (!Array.isArray(this.state.routes)) return false;
+    const key = String(name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const before = this.state.routes.length;
+    this.state.routes = this.state.routes.filter((item) => {
+      const itemKey = String(item?.name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+      const itemJid = String(item?.jid || "");
+      return itemKey !== key && itemJid !== String(name || "");
+    });
+    return this.state.routes.length < before;
+  }
+
+  clearRoutes() {
+    this.state.routes = [];
   }
 }
 
