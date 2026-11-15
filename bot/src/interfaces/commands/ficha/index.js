@@ -1099,14 +1099,13 @@ async function manageRoutes(ctx, store, options) {
   if (!action || ["ver", "lista", "listar"].includes(action)) {
     const meta = await safeGroupMetadata(ctx);
     const originScope = meta?.linkedParent || "";
-    const showAll = ["todas", "todos", "all"].includes(normalize(ctx.args[1] || ""));
-
-    // Solo las rutas que aplican aquí: las de esta comunidad y las globales.
-    // Las de otra comunidad no se mezclan en la lista.
-    const visibles = originScope && !showAll
-      ? routes.filter((route) => !route.scope || route.scope === originScope)
-      : routes;
-    const ocultas = routes.length - visibles.length;
+    // Solo el creador ve las rutas de otras comunidades; un admin ve las suyas
+    // (y las globales) y ni siquiera se le dice cuántas hay fuera.
+    const visibles = auth.isCreator
+      ? routes
+      : originScope
+        ? routes.filter((route) => !route.scope || route.scope === originScope)
+        : routes;
 
     const names = await groupNames(ctx, visibles);
     const communities = await groupNamesFor(ctx, [...new Set(visibles.map((route) => route.scope).filter(Boolean))]);
@@ -1124,12 +1123,7 @@ async function manageRoutes(ctx, store, options) {
       },
     });
 
-    if (!ocultas) return texto;
-    return [
-      texto,
-      "",
-      `_Hay ${ocultas} ruta${ocultas > 1 ? "s" : ""} de otra comunidad. Verlas con *!rutas ver todas*._`,
-    ].join("\n");
+    return texto;
   }
 
   if (["limpiar", "reset", "vaciar"].includes(action)) {
@@ -1309,6 +1303,6 @@ async function getAdmin(ctx, ownerPolicy) {
   const sender = findParticipant(metadata, senderIds);
   const isCreator = senderIds.some((id) => ownerPolicy?.isCreatorJid?.(id, metadata));
 
-  if (isAdminParticipant(sender) || isCreator) return { ok: true, metadata };
+  if (isAdminParticipant(sender) || isCreator) return { ok: true, metadata, isCreator };
   return { ok: false, reason: MSG.SOLO_ADMIN };
 }

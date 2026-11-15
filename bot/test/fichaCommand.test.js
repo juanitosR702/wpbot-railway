@@ -657,13 +657,13 @@ test("rutas: !rutas agregar rechaza un destino sin comunidad cuando aquí sí ha
   assert.match(reply, /no reporta comunidad/);
 });
 
-test("rutas: !rutas ver solo muestra las de la comunidad del grupo", async () => {
+test("rutas: un admin solo ve las rutas de su comunidad; el creador ve todas", async () => {
   const routes = [
     { name: "aquí", jid: TEENS, scope: "comA@g.us", conditions: [] },
     { name: "global", jid: ADULTOS, scope: "", conditions: [] },
     { name: "ajena", jid: OTROS, scope: "comB@g.us", conditions: [] },
   ];
-  const handler = await setup(fakeStore({ routes: () => routes }));
+  const store = fakeStore({ routes: () => routes });
   const metaFetch = async (jid) => ({
     [TEENS]: { subject: "Grupo -16" },
     [ADULTOS]: { subject: "+17 actividades NR" },
@@ -674,27 +674,29 @@ test("rutas: !rutas ver solo muestra las de la comunidad del grupo", async () =>
     participants: [{ id: "573000000076@s.whatsapp.net", admin: "admin" }],
   });
 
-  const { ctx } = makeCtxWithSender(76, { commandBody: "ver", getGroupMetadata: metaFetch });
-  const reply = await handler({
-    ...ctx,
-    isCommand: true,
-    command: "rutas",
-    args: ["ver"],
-    services: { ...ctx.services, getGroupMetadata: metaFetch },
-  });
+  async function renderAs(isCreator) {
+    let handler = null;
+    fichaPlugin.register(
+      { register: (fn) => { handler = fn; }, getCommands: () => [], prefix: "!" },
+      { store, ownerPolicy: { isCreatorJid: () => isCreator } },
+    );
+    const { ctx } = makeCtxWithSender(76, { commandBody: "ver", getGroupMetadata: metaFetch });
+    return handler({
+      ...ctx,
+      isCommand: true,
+      command: "rutas",
+      args: ["ver"],
+      services: { ...ctx.services, getGroupMetadata: metaFetch },
+    });
+  }
 
-  assert.match(reply, /aquí/);
-  assert.match(reply, /global/);
-  assert.strictEqual(reply.includes("ajena"), false);
-  assert.match(reply, /1 ruta de otra comunidad/);
+  const admin = await renderAs(false);
+  assert.match(admin, /aquí/);
+  assert.match(admin, /global/);
+  assert.strictEqual(admin.includes("ajena"), false);
+  assert.strictEqual(/otra comunidad/i.test(admin), false);
 
-  const todas = await handler({
-    ...ctx,
-    isCommand: true,
-    command: "rutas",
-    args: ["ver", "todas"],
-    commandBody: "ver todas",
-    services: { ...ctx.services, getGroupMetadata: metaFetch },
-  });
-  assert.match(todas, /ajena/);
+  const creador = await renderAs(true);
+  assert.match(creador, /ajena/);
+  assert.match(creador, /aquí/);
 });
