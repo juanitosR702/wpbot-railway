@@ -124,9 +124,8 @@ async function startFicha(ctx, store) {
     return "⚠️ Ya tienes una ficha en curso. Escribe *cancelar* para salir.";
   }
 
-  const hasRoutes = typeof store.routes === "function" && store.routes().length > 0;
-  if (!hasRoutes && !store.destination()) {
-    return "⚠️ Todavía no hay un grupo de almacenamiento de fichas.\nUn admin debe ejecutar *!fichadestino* en ese grupo o crear rutas con *!rutas aqui <nombre>*.";
+  if (!store.destination()) {
+    return "⚠️ Todavía no hay un grupo de almacenamiento de fichas.\nUn admin debe ejecutar *!fichadestino* en ese grupo.";
   }
 
   const form = store.form(ctx.phone) || DEFAULT_FICHA;
@@ -358,17 +357,12 @@ async function submitFicha(ctx, store, session, options = {}) {
     return HALT;
   }
 
-  // Destinos: las rutas configuradas con *!rutas* ganan; si no hay ninguna o
-  // ninguna cumple las condiciones, se usa el almacén clásico (!fichadestino).
-  const routes = typeof store.routes === "function" ? store.routes() : [];
-  const resolved = resolveFichaTargets(routes, session.form, session.values);
-  let targets = resolved.sends;
-  if (!targets.length) {
-    const legacy = store.destination();
-    if (!legacy) {
-      return "⚠️ No hay grupos de destino configurados. Un admin debe crear rutas con *!rutas aqui <nombre>* o ejecutar *!fichadestino* en el grupo de almacén.";
-    }
-    targets = [{ jid: legacy, name: "" }];
+  // La ficha va SIEMPRE al grupo de almacén (!fichadestino). Las rutas de
+  // *!rutas* no cambian el destino de la ficha: deciden a qué grupos se añade
+  // a la persona.
+  const destination = store.destination();
+  if (!destination) {
+    return "⚠️ No hay grupo de almacenamiento configurado. Un admin debe ejecutar *!fichadestino* en ese grupo.";
   }
 
   const metadata = await safeGroupMetadata(ctx);
@@ -379,19 +373,12 @@ async function submitFicha(ctx, store, session, options = {}) {
     date: formatFichaDate(),
   });
 
-  let delivered = 0;
-  for (const target of targets) {
-    try {
-      await ctx.services.sendMessage(target.jid, { text, mentions: [ctx.sender] });
-      delivered += 1;
-    } catch (err) {
-      console.error(`[ficha] no se pudo enviar a ${target.jid}:`, err?.message || err);
-    }
+  try {
+    await ctx.services.sendMessage(destination, { text, mentions: [ctx.sender] });
+  } catch (err) {
+    console.error("[ficha] no se pudo enviar al grupo destino:", err?.message || err);
+    return "⚠️ No pude enviar la ficha al grupo de almacenamiento. Avisa a un admin.";
   }
-
-  if (!delivered) return "⚠️ No pude enviar la ficha a ningún grupo. Avisa a un admin.";
-
-  console.log(`[ficha] enviada a ${delivered}/${targets.length} destino(s)${resolved.fallback ? " (comodín)" : ""}`);
 
   dropSession(ctx, session);
 
@@ -404,14 +391,111 @@ async function submitFicha(ctx, store, session, options = {}) {
     console.warn("[ficha] error en el gancho onSubmitted:", err?.message || err);
   }
 
-  const destino = delivered > 1
-    ? `${delivered} grupos`
-    : (targets[0]?.name ? `*${targets[0].name}*` : "el grupo de almacenamiento");
-  const parcial = delivered < targets.length ? `\n_(No pude entregarla en ${targets.length - delivered} grupo/s.)_` : "";
+  // Reparto por rutas: añadir a la persona a los grupos que le toquen.
+  const { notes } = await deliverByRoutes(ctx, store, session);
 
-  return [`✅ *Ficha enviada* a ${destino}. ¡Gracias!${parcial}`, extra]
+  return ["✅ *Ficha enviada* al grupo de almacenamiento. ¡Gracias!", ...notes, extra]
     .filter(Boolean)
     .join("\n\n");
+}
+
+// ---- Reparto: añadir a la persona a los grupos de sus rutas ----
+
+function inviteUrl(code) {
+  const value = String(code || "").trim();
+  if (!value) return "";
+  return /^https?:/i.test(value) ? value : `https://chat.whatsapp.com/${value}`;
+}
+
+// WhatsApp solo deja añadir por número de teléfono, así que se prueban primero
+// las variantes `@s.whatsapp.net` que trae el mensaje.
+function addCandidates(ctx) {
+  const key = ctx.raw?.key || {};
+  const ids = [key.participantPn, key.participantAlt, ctx.sender, key.participant, key.participantLid]
+    .filter(Boolean)
+    .map((id) => String(id));
+  const phone = ids.filter((id) => id.endsWith("@s.whatsapp.net"));
+  const rest = ids.filter((id) => !id.endsWith("@s.whatsapp.net"));
+  return [...new Set([...phone, ...rest])];
+}
+
+async function tryAddToGroup(ctx, jid) {
+  const update = ctx.services?.updateParticipants;
+  if (typeof update !== "function") return false;
+
+  for (const participant of addCandidates(ctx)) {
+    try {
+      const result = await update(jid, [participant], "add");
+      const entry = Array.isArray(result) ? result[0] : result;
+      const status = String(entry?.status ?? entry?.error ?? "");
+      if (!entry || status === "200" || status === "409" || status === "success") return true;
+    } catch (err) {
+      console.warn(`[ficha] no pude añadir a ${participant} en ${jid}:`, err?.message || err);
+    }
+  }
+  return false;
+}
+
+async function routeInviteLink(ctx, route) {
+  const direct = String(route?.invite || "").trim();
+  if (/^https?:/i.test(direct)) return direct;
+  try {
+    const code = await ctx.services?.inviteCode?.(route.jid);
+    return inviteUrl(code);
+  } catch (err) {
+    console.warn(`[ficha] no pude obtener el link de ${route.jid}:`, err?.message || err);
+    return "";
+  }
+}
+
+async function deliverByRoutes(ctx, store, session) {
+  const routes = typeof store.routes === "function" ? store.routes() : [];
+  if (!routes.length) return { notes: [] };
+
+  const { sends, fallback } = resolveFichaTargets(routes, session.form, session.values);
+  if (!sends.length) return { notes: [] };
+
+  const added = [];
+  const invited = [];
+  const failed = [];
+  const privateJid = addCandidates(ctx).find((id) => id.endsWith("@s.whatsapp.net")) || ctx.sender;
+
+  for (const target of sends) {
+    const nombre = target.name ? `*${target.name}*` : "el grupo";
+    if (await tryAddToGroup(ctx, target.jid)) {
+      added.push(nombre);
+      continue;
+    }
+
+    const link = await routeInviteLink(ctx, target);
+    if (!link) {
+      failed.push(nombre);
+      continue;
+    }
+
+    try {
+      await ctx.services.sendMessage(privateJid, {
+        text: [
+          `📩 No pude añadirte a ${nombre}.`,
+          "",
+          "WhatsApp solo deja añadir directamente a números que tenga guardados, así que entra con este link:",
+          link,
+        ].join("\n"),
+      });
+      invited.push(nombre);
+    } catch (err) {
+      console.warn(`[ficha] no pude mandar el link de ${target.jid} por privado:`, err?.message || err);
+      failed.push(nombre);
+    }
+  }
+
+  console.log(`[ficha] rutas${fallback ? " (comodín)" : ""}: añadidos=${added.length} link=${invited.length} fallos=${failed.length}`);
+
+  const notes = [];
+  if (added.length) notes.push(`✅ Te añadí a ${added.join(", ")}.`);
+  if (invited.length) notes.push(`📩 Te mandé por privado el link de ${invited.join(", ")}.`);
+  if (failed.length) notes.push(`⚠️ No pude gestionar tu entrada en ${failed.join(", ")}. Avisa a un admin.`);
+  return { notes };
 }
 
 // ---- Listas interactivas con respaldo a texto ----
@@ -674,17 +758,29 @@ async function manageRoutes(ctx, store, options) {
         "",
         "Ejemplos:",
         "• *!rutas aqui teens edad=13-17*",
-        "• *!rutas aqui adultos edad=18-99*",
-        "• *!rutas aqui colombia pais=colombia*",
-        "• *!rutas aqui otros*  (comodín: recibe las que no encajen)",
+        "• *!rutas aqui adultos edad=18-99 link=https://chat.whatsapp.com/XXXX*",
+        "• *!rutas aqui otros*  (comodín: los que no encajen)",
+        "",
+        "El bot intenta *añadir* a la persona a ese grupo. Si WhatsApp no lo permite,",
+        "le manda el link por privado: el del grupo o el que pongas con *link=*.",
       ].join("\n");
     }
 
     const conditions = [];
+    let invite = "";
     for (const token of tokens.slice(2)) {
+      const linkMatch = token.match(/^link=(.+)$/i);
+      if (linkMatch) {
+        const value = linkMatch[1].trim();
+        if (!/^https?:/i.test(value) && !["auto", "propio"].includes(normalize(value))) {
+          return "⚠️ El *link=* debe ser una URL que empiece por https:// (o *link=auto* para generar el del grupo).";
+        }
+        invite = ["auto", "propio"].includes(normalize(value)) ? "auto" : value;
+        continue;
+      }
       const parsed = parseRouteCondition(token);
       if (!parsed) {
-        return `⚠️ No entendí la condición «${token}».\nUsa *campo=valor* (ej: *edad=13-17*, *pais=colombia|mexico*).`;
+        return `⚠️ No entendí la condición «${token}».\nUsa *campo=valor* (ej: *edad=13-17*, *pais=colombia|mexico*) o *link=<url>*.`;
       }
       conditions.push(parsed);
     }
@@ -693,6 +789,7 @@ async function manageRoutes(ctx, store, options) {
     const route = store.addRoute({
       name,
       jid,
+      invite,
       conditions,
       enabled: true,
       updatedBy: ctx.sender,

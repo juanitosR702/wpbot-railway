@@ -247,7 +247,7 @@ test("ficha: !fichadestino acepta un JID explícito", async () => {
   assert.deepStrictEqual(saved, ["120363000000000555@g.us"]);
 });
 
-// ---- Reparto a varios grupos (!rutas) ----
+// ---- Reparto por rutas: añadir al usuario según sus datos ----
 
 const EDAD_FIELDS = {
   header: "FICHA EDAD",
@@ -265,33 +265,67 @@ async function fillFicha(handler, ctx, nombre, edad) {
   return handler({ ...ctx, selection: "f:s" });
 }
 
-test("ficha: se envía a todos los grupos cuyas condiciones se cumplen", async () => {
+const TEENS = "120363000000000111@g.us";
+const ADULTOS = "120363000000000333@g.us";
+const OTROS = "120363000000000444@g.us";
+
+test("ficha: va al almacén y añade al usuario a todos los grupos que cumplen", async () => {
   const routes = [
-    { name: "teens", jid: "120363000000000111@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
-    { name: "ana", jid: "120363000000000222@g.us", conditions: [{ field: "Nombre", type: "values", values: ["Ana"] }] },
-    { name: "adultos", jid: "120363000000000333@g.us", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
+    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "ana", jid: ADULTOS, invite: "", conditions: [{ field: "Nombre", type: "values", values: ["Ana"] }] },
   ];
   const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
-  const { ctx, sent } = makeCtxWithSender(31);
+  const { ctx, sent } = makeCtxWithSender(41);
+  const added = [];
+  ctx.services.updateParticipants = async (jid, participants, action) => {
+    added.push({ jid, participants, action });
+    return [{ status: "200", jid }];
+  };
 
   const done = await fillFicha(handler, ctx, "Ana", "17");
-  assert.match(done, /2 grupos/);
 
-  const jids = sent.filter((item) => item.jid !== ORIGIN).map((item) => item.jid).sort();
-  assert.deepStrictEqual(jids, ["120363000000000111@g.us", "120363000000000222@g.us"]);
+  // La ficha siempre va al grupo de almacén.
+  assert.strictEqual(sent.at(-1).jid, DESTINATION);
+  assert.deepStrictEqual(added.map((item) => item.jid), [TEENS, ADULTOS]);
+  assert.strictEqual(added[0].action, "add");
+  assert.match(done, /Te añadí/);
 });
 
-test("ficha: cae al comodín cuando ninguna condición se cumple", async () => {
+test("ficha: si no puede añadir, manda el link del grupo por privado", async () => {
   const routes = [
-    { name: "adultos", jid: "120363000000000333@g.us", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
-    { name: "otros", jid: "120363000000000444@g.us", conditions: [] },
+    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
   ];
   const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
-  const { ctx, sent } = makeCtxWithSender(32);
+  const { ctx, sent } = makeCtxWithSender(42);
+  let inviteAsked = "";
+  ctx.services.updateParticipants = async () => [{ status: "403" }];
+  ctx.services.inviteCode = async (jid) => {
+    inviteAsked = jid;
+    return "CODE123";
+  };
 
   const done = await fillFicha(handler, ctx, "Ana", "17");
-  assert.match(done, /\*otros\*/);
 
-  const jids = sent.filter((item) => item.jid !== ORIGIN).map((item) => item.jid);
-  assert.deepStrictEqual(jids, ["120363000000000444@g.us"]);
+  assert.strictEqual(inviteAsked, TEENS);
+  const dm = sent.find((item) => item.jid !== ORIGIN && item.jid !== DESTINATION);
+  assert.ok(dm, "debe mandar un privado");
+  assert.strictEqual(dm.jid, "573000000042@s.whatsapp.net");
+  assert.match(dm.content.text, /chat\.whatsapp\.com\/CODE123/);
+  assert.match(done, /por privado/);
+});
+
+test("ficha: sin rutas configuradas no intenta añadir a nadie", async () => {
+  const handler = await setup(fakeStore({ form: () => EDAD_FIELDS }));
+  const { ctx, sent } = makeCtxWithSender(43);
+  let calls = 0;
+  ctx.services.updateParticipants = async () => {
+    calls += 1;
+    return [{ status: "200" }];
+  };
+
+  const done = await fillFicha(handler, ctx, "Ana", "17");
+
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(sent.at(-1).jid, DESTINATION);
+  assert.match(done, /Ficha enviada/);
 });

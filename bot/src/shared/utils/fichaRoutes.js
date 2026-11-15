@@ -106,7 +106,7 @@ export function resolveFichaTargets(routes, form, values) {
   for (const route of chosen) {
     if (seen.has(route.jid)) continue;
     seen.add(route.jid);
-    sends.push({ jid: route.jid, name: route.name || "" });
+    sends.push({ jid: route.jid, name: route.name || "", invite: route.invite || "" });
   }
 
   return {
@@ -144,8 +144,9 @@ export function renderRoutes(routes) {
       ? conditions.map(describeCondition).join(" · ")
       : "comodín (recibe las que no encajen)";
     const estado = route.enabled === false ? " ⏸" : "";
+    const link = /^https?:/i.test(String(route.invite || "")) ? " · link fijo" : " · link automático";
     lines.push(`${index + 1}. *${route.name || "sin nombre"}*${estado} — ${detalle}`);
-    lines.push(`   ${route.jid}`);
+    lines.push(`   ${route.jid}${link}`);
   });
   lines.push("", "La ficha se manda a *todos* los grupos cuyas condiciones se cumplan.");
   return lines.join("\n");
