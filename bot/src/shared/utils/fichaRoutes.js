@@ -161,27 +161,37 @@ export function renderRoutes(routes, { names = {}, communities = {}, origin = nu
     ].join("\n");
   }
 
-  const lines = ["📥 *Rutas de fichas*", ""];
-  list.forEach((route, index) => {
+  // Se agrupa por condición: así se ve de un vistazo que una misma regla
+  // (edad<16, por ejemplo) alimenta varios grupos.
+  const groups = new Map();
+  for (const route of list) {
     const conditions = route.conditions || [];
-    const detalle = conditions.length
-      ? conditions.map(describeCondition).join(" · ")
-      : "comodín (recibe las que no encajen)";
-    const estado = route.enabled === false ? " ⏸" : "";
-    const link = /^https?:/i.test(String(route.invite || "")) ? "link fijo" : "link automático";
-    const nombreGrupo = names[route.jid] || "";
-    // Se identifica por el nombre del grupo; el JID solo si no hay nombre.
-    lines.push(`${index + 1}. *${route.name || nombreGrupo || "sin nombre"}*${estado} — ${detalle}`);
-    if (nombreGrupo && route.name && normalizeRouteText(nombreGrupo) !== normalizeRouteText(route.name)) {
-      lines.push(`   🏷 ${nombreGrupo}`);
+    const key = conditions.length ? conditions.map(describeCondition).join(" · ") : "comodín";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(route);
+  }
+
+  const lines = ["📥 *Rutas de fichas*", ""];
+  for (const [condition, items] of groups) {
+    lines.push(`🔹 *${condition}* — ${items.length} grupo${items.length > 1 ? "s" : ""}`);
+    for (const route of items) {
+      const nombreGrupo = names[route.jid] || "";
+      const estado = route.enabled === false ? " ⏸" : "";
+      const link = /^https?:/i.test(String(route.invite || "")) ? "link fijo" : "link automático";
+      lines.push(`   • *${route.name || nombreGrupo || "sin nombre"}*${estado}`);
+      if (nombreGrupo && route.name && normalizeRouteText(nombreGrupo) !== normalizeRouteText(route.name)) {
+        lines.push(`     🏷 ${nombreGrupo}`);
+      }
+      if (!nombreGrupo) lines.push(`     🏷 ${route.jid}`);
+      if (route.scope && route.scope !== route.jid) {
+        const comunidad = communities[route.scope];
+        lines.push(`     🏘 ${comunidad ? `Comunidad: ${comunidad}` : route.scope}`);
+      }
+      lines.push(`     🔗 ${link}`);
     }
-    if (!nombreGrupo) lines.push(`   🏷 ${route.jid}`);
-    if (route.scope && route.scope !== route.jid) {
-      const comunidad = communities[route.scope];
-      lines.push(`   🏘 ${comunidad ? `Comunidad: ${comunidad}` : route.scope}`);
-    }
-    lines.push(`   🔗 ${link}`);
-  });
+    lines.push("");
+  }
+
   lines.push("", "La ficha se publica en el grupo de almacén y el bot añade a la persona");
   lines.push("a todos los grupos de *su misma comunidad* cuyas condiciones se cumplan.");
 

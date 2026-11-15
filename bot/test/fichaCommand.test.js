@@ -404,3 +404,26 @@ test("ficha: muestra el teléfono aunque el remitente llegue como LID", async ()
   assert.strictEqual(delivery.content.text.includes("99887766554433"), false);
   assert.deepStrictEqual(delivery.content.mentions, [phone]);
 });
+
+test("ficha: no vuelve a añadir a quien ya está en el grupo", async () => {
+  const routes = [
+    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "otros", jid: OTROS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+  ];
+  const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
+  const { ctx } = makeCtxWithSender(43);
+  const added = [];
+  ctx.services.updateParticipants = async (jid) => {
+    added.push(jid);
+    return [{ status: "200", jid }];
+  };
+  ctx.services.getGroupMetadata = async (jid) => ({
+    subject: "x",
+    participants: jid === TEENS ? [{ id: ctx.sender }] : [],
+  });
+
+  const done = await fillFicha(handler, ctx, "Ana", "17");
+
+  assert.deepStrictEqual(added, [OTROS]);
+  assert.match(done, /Ya estabas en \*teens\*/);
+});

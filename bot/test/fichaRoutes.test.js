@@ -167,3 +167,23 @@ test("renderRoutes: muestra el nombre de la comunidad, no su JID", () => {
   assert.match(texto, /Comunidad: Ghost Dragons/);
   assert.strictEqual(texto.includes("com@g.us"), false);
 });
+
+test("renderRoutes: agrupa todos los grupos que comparten condición", () => {
+  const rango = (min, max) => [{ field: "Edad", type: "range", min, max }];
+  const texto = renderRoutes(
+    [
+      { name: "A", jid: "1@g.us", conditions: rango(16, 999) },
+      { name: "B", jid: "2@g.us", conditions: rango(16, 999) },
+      { name: "C", jid: "3@g.us", conditions: rango(0, 15) },
+    ],
+    { names: { "1@g.us": "Grupo A", "2@g.us": "Grupo B", "3@g.us": "Grupo C" } },
+  );
+
+  assert.match(texto, /\*Edad: 16–999\* — 2 grupos/);
+  assert.match(texto, /\*Edad: 0–15\* — 1 grupo/);
+  // Los dos grupos de la misma condición salen juntos, antes del siguiente rango.
+  const a = texto.indexOf("Grupo A");
+  const b = texto.indexOf("Grupo B");
+  const c = texto.indexOf("Grupo C");
+  assert.ok(a < b && b < c, "los grupos de 16+ deben ir juntos");
+});

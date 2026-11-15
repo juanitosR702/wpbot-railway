@@ -461,6 +461,18 @@ function currentGroupJid(ctx) {
   return phone.endsWith("@g.us") ? phone : `${phone}@g.us`;
 }
 
+// Si la persona ya está en el grupo no se vuelve a "añadir": evita errores y
+// molesta menos cuando alguien manda dos veces la ficha.
+async function isAlreadyMember(ctx, jid, participantId) {
+  if (!participantId) return false;
+  try {
+    const meta = await ctx.services?.getGroupMetadata?.(jid);
+    return Boolean(findParticipant(meta, [participantId]));
+  } catch {
+    return false;
+  }
+}
+
 async function groupNamesFor(ctx, jids) {
   const names = {};
   for (const jid of jids) {
@@ -512,10 +524,16 @@ async function deliverByRoutes(ctx, store, session) {
   const added = [];
   const invited = [];
   const failed = [];
+  const already = [];
   const privateJid = addCandidates(ctx).find((id) => id.endsWith("@s.whatsapp.net")) || ctx.sender;
+  const personJid = phoneSenderJid(ctx, meta);
 
   for (const target of sends) {
     const nombre = target.name ? `*${target.name}*` : "el grupo";
+    if (await isAlreadyMember(ctx, target.jid, personJid)) {
+      already.push(nombre);
+      continue;
+    }
     if (await tryAddToGroup(ctx, target.jid)) {
       added.push(nombre);
       continue;
@@ -543,10 +561,11 @@ async function deliverByRoutes(ctx, store, session) {
     }
   }
 
-  console.log(`[ficha] rutas${fallback ? " (comodín)" : ""}: añadidos=${added.length} link=${invited.length} fallos=${failed.length}`);
+  console.log(`[ficha] rutas${fallback ? " (comodín)" : ""}: añadidos=${added.length} ya_estaba=${already.length} link=${invited.length} fallos=${failed.length}`);
 
   const notes = [];
   if (added.length) notes.push(`✅ Te añadí a ${added.join(", ")}.`);
+  if (already.length) notes.push(`ℹ️ Ya estabas en ${already.join(", ")}.`);
   if (invited.length) notes.push(`📩 Te mandé por privado el link de ${invited.join(", ")}.`);
   if (failed.length) notes.push(`⚠️ No pude gestionar tu entrada en ${failed.join(", ")}. Avisa a un admin.`);
   return { notes };
