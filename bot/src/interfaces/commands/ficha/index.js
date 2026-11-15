@@ -1075,7 +1075,12 @@ async function resolveTargetScope(ctx, target, originScope) {
   const scope = target.scope || meta?.linkedParent || "";
   const origin = originScope || "";
 
-  if (!origin) return { scope, error: "" };
+  if (!origin) {
+    return {
+      scope,
+      error: "⚠️ Este grupo no está en una comunidad de WhatsApp: las rutas son cerradas y solo se crean desde un grupo de la comunidad.",
+    };
+  }
   if (!scope) {
     return {
       scope: "",
@@ -1126,9 +1131,9 @@ async function manageRoutes(ctx, store, options) {
     // esta comunidad y las globales. Solo el creador puede pedir el resto con
     // `!rutas ver todas`.
     const wantsAll = auth.isCreator && ["todas", "todos", "all"].includes(normalize(ctx.args[1] || ""));
-    const visibles = wantsAll || !originScope
+    const visibles = wantsAll
       ? routes
-      : routes.filter((route) => !route.scope || route.scope === originScope);
+      : routes.filter((route) => Boolean(originScope) && route.scope === originScope);
 
     const names = await groupNames(ctx, visibles);
     const communities = await groupNamesFor(ctx, [...new Set(visibles.map((route) => route.scope).filter(Boolean))]);
@@ -1272,6 +1277,10 @@ async function manageRoutes(ctx, store, options) {
 
     const { conditions, invite, error } = parseRouteArgs(rest);
     if (error) return error;
+
+    if (!scope) {
+      return "⚠️ Este grupo no está en una comunidad de WhatsApp, y las rutas son cerradas: una ruta sin comunidad no recibiría fichas.\nRegistra la ruta desde un grupo de la comunidad.";
+    }
 
     const route = store.addRoute({
       name,

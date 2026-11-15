@@ -50,6 +50,7 @@ function makeCtx(overrides = {}) {
     },
     getGroupMetadata: async () => ({
       subject: "Clan",
+      linkedParent: COMUNIDAD,
       participants: [{ id: ctx.sender, admin: "admin" }],
     }),
     ...overrides,
@@ -265,14 +266,15 @@ async function fillFicha(handler, ctx, nombre, edad) {
   return handler({ ...ctx, selection: "f:s" });
 }
 
+const COMUNIDAD = "120363000000000800@g.us";
 const TEENS = "120363000000000111@g.us";
 const ADULTOS = "120363000000000333@g.us";
 const OTROS = "120363000000000444@g.us";
 
 test("ficha: va al almacén y añade al usuario a todos los grupos que cumplen", async () => {
   const routes = [
-    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
-    { name: "ana", jid: ADULTOS, invite: "", conditions: [{ field: "Nombre", type: "values", values: ["Ana"] }] },
+    { name: "teens", jid: TEENS, invite: "", scope: COMUNIDAD, conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "ana", jid: ADULTOS, invite: "", scope: COMUNIDAD, conditions: [{ field: "Nombre", type: "values", values: ["Ana"] }] },
   ];
   const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
   const { ctx, sent } = makeCtxWithSender(41);
@@ -293,7 +295,7 @@ test("ficha: va al almacén y añade al usuario a todos los grupos que cumplen",
 
 test("ficha: si no puede añadir, manda el link del grupo por privado", async () => {
   const routes = [
-    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "teens", jid: TEENS, invite: "", scope: COMUNIDAD, conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
   ];
   const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
   const { ctx, sent } = makeCtxWithSender(42);
@@ -407,8 +409,8 @@ test("ficha: muestra el teléfono aunque el remitente llegue como LID", async ()
 
 test("ficha: no vuelve a añadir a quien ya está en el grupo", async () => {
   const routes = [
-    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
-    { name: "otros", jid: OTROS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "teens", jid: TEENS, invite: "", scope: COMUNIDAD, conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "otros", jid: OTROS, invite: "", scope: COMUNIDAD, conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
   ];
   const handler = await setup(fakeStore({ form: () => EDAD_FIELDS, routes: () => routes }));
   const { ctx } = makeCtxWithSender(43);
@@ -430,7 +432,7 @@ test("ficha: no vuelve a añadir a quien ya está en el grupo", async () => {
 
 test("ficha: registra a la persona y sus grupos para aprobar solicitudes", async () => {
   const routes = [
-    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "teens", jid: TEENS, invite: "", scope: COMUNIDAD, conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
   ];
   const members = [];
   const handler = await setup(
@@ -463,7 +465,7 @@ test("rutas: !rutas agregar crea la ruta de otro grupo por su nombre", async () 
   const handler = await setup(store);
   const { ctx } = makeCtxWithSender(61, { commandBody: "agregar Grupo -16 edad<16" });
   const groups = {
-    [TEENS]: { subject: "Grupo -16", linkedParent: "com@g.us" },
+    [TEENS]: { subject: "Grupo -16", linkedParent: COMUNIDAD },
     [ADULTOS]: { subject: "+17 actividades NR" },
   };
 
@@ -478,7 +480,7 @@ test("rutas: !rutas agregar crea la ruta de otro grupo por su nombre", async () 
   assert.strictEqual(routes.length, 1);
   assert.strictEqual(routes[0].jid, TEENS);
   assert.strictEqual(routes[0].name, "Grupo -16");
-  assert.strictEqual(routes[0].scope, "com@g.us");
+  assert.strictEqual(routes[0].scope, COMUNIDAD);
   assert.deepStrictEqual(routes[0].conditions, [{ field: "edad", type: "range", min: 0, max: 15 }]);
   assert.match(reply, /Ruta \*Grupo -16\* creada/);
 });
@@ -534,9 +536,9 @@ test("rutas: el asistente crea varias rutas en dos respuestas", async () => {
   });
   const handler = await setup(store);
   const groups = {
-    "1@g.us": { subject: "Grupo -16", linkedParent: "com@g.us" },
-    "2@g.us": { subject: "Niños NR", linkedParent: "com@g.us" },
-    "3@g.us": { subject: "+17 actividades NR", linkedParent: "com@g.us" },
+    "1@g.us": { subject: "Grupo -16", linkedParent: COMUNIDAD },
+    "2@g.us": { subject: "Niños NR", linkedParent: COMUNIDAD },
+    "3@g.us": { subject: "+17 actividades NR", linkedParent: COMUNIDAD },
   };
   const services = { listGroups: async () => groups };
 
@@ -554,7 +556,7 @@ test("rutas: el asistente crea varias rutas en dos respuestas", async () => {
   const final = await handler({ ...ctx, isCommand: false, text: "edad<16" });
   assert.strictEqual(routes.length, 2);
   assert.deepStrictEqual(routes.map((route) => route.jid), ["1@g.us", "2@g.us"]);
-  assert.strictEqual(routes[0].scope, "com@g.us");
+  assert.strictEqual(routes[0].scope, COMUNIDAD);
   assert.deepStrictEqual(routes[0].conditions, [{ field: "edad", type: "range", min: 0, max: 15 }]);
   assert.match(final, /2 rutas creadas/);
 });
@@ -569,7 +571,7 @@ test("rutas: el asistente acepta 'listo' como comodín y cancelar", async () => 
     },
   });
   const handler = await setup(store);
-  const groups = { "9@g.us": { subject: "Grupo Comodín" } };
+  const groups = { "9@g.us": { subject: "Grupo Comodín", linkedParent: COMUNIDAD } };
   const base = makeCtx().ctx.services;
 
   const a = makeCtxWithSender(72, { commandBody: "agregar", services: { ...base, listGroups: async () => groups } });
@@ -604,10 +606,10 @@ test("rutas: el asistente no crea rutas de grupos de otra comunidad", async () =
     "3@g.us": { subject: "Sin comunidad" },
   };
   const meta = (jid) => ({
-    "1@g.us": { subject: "Mismo clan", linkedParent: "comA@g.us" },
+    "1@g.us": { subject: "Mismo clan", linkedParent: COMUNIDAD },
     "2@g.us": { subject: "Otro clan", linkedParent: "comB@g.us" },
     "3@g.us": { subject: "Sin comunidad" },
-  }[jid] || { subject: "Lobby", linkedParent: "comA@g.us", participants: [{ id: "573000000074@s.whatsapp.net", admin: "admin" }] });
+  }[jid] || { subject: "Lobby", linkedParent: COMUNIDAD, participants: [{ id: "573000000074@s.whatsapp.net", admin: "admin" }] });
 
   const metaFetch = async (jid) => meta(jid);
   const { ctx } = makeCtxWithSender(74, {
@@ -622,7 +624,7 @@ test("rutas: el asistente no crea rutas de grupos de otra comunidad", async () =
 
   assert.strictEqual(routes.length, 1);
   assert.strictEqual(routes[0].jid, "1@g.us");
-  assert.strictEqual(routes[0].scope, "comA@g.us");
+  assert.strictEqual(routes[0].scope, COMUNIDAD);
   assert.match(final, /Otro clan\* es de otra comunidad/);
   assert.match(final, /Sin comunidad\* no reporta comunidad/);
 });
@@ -642,7 +644,7 @@ test("rutas: !rutas agregar rechaza un destino sin comunidad cuando aquí sí ha
     listGroups: async () => ({ "5@g.us": { subject: "Suelto" } }),
     getGroupMetadata: async (jid) => (jid === "5@g.us"
       ? { subject: "Suelto" }
-      : { subject: "Lobby", linkedParent: "comA@g.us", participants: [{ id: "573000000075@s.whatsapp.net", admin: "admin" }] }),
+      : { subject: "Lobby", linkedParent: COMUNIDAD, participants: [{ id: "573000000075@s.whatsapp.net", admin: "admin" }] }),
   };
 
   const reply = await handler({
@@ -659,7 +661,7 @@ test("rutas: !rutas agregar rechaza un destino sin comunidad cuando aquí sí ha
 
 test("rutas: dentro de una comunidad solo se ven sus rutas; el creador puede pedir todas", async () => {
   const routes = [
-    { name: "aquí", jid: TEENS, scope: "comA@g.us", conditions: [] },
+    { name: "aquí", jid: TEENS, scope: COMUNIDAD, conditions: [] },
     { name: "global", jid: ADULTOS, scope: "", conditions: [] },
     { name: "ajena", jid: OTROS, scope: "comB@g.us", conditions: [] },
   ];
@@ -670,7 +672,7 @@ test("rutas: dentro de una comunidad solo se ven sus rutas; el creador puede ped
     [OTROS]: { subject: "Otro clan" },
   }[jid] || {
     subject: "Lobby NR",
-    linkedParent: "comA@g.us",
+    linkedParent: COMUNIDAD,
     participants: [{ id: "573000000076@s.whatsapp.net", admin: "admin" }],
   });
 
@@ -690,12 +692,12 @@ test("rutas: dentro de una comunidad solo se ven sus rutas; el creador puede ped
     });
   }
 
-  // Dentro de la comunidad, ni el creador ve otras comunidades por defecto.
+  // Dentro de la comunidad, ni el creador ve otras comunidades ni las globales.
   for (const isCreator of [false, true]) {
     const vista = await renderAs(isCreator);
     assert.match(vista, /aquí/);
-    assert.match(vista, /global/);
     assert.strictEqual(vista.includes("ajena"), false);
+    assert.strictEqual(vista.includes("global"), false);
   }
 
   // El escape existe solo para el creador.
@@ -711,13 +713,13 @@ test("rutas: el asistente y !rutas grupos solo listan los grupos de esta comunid
   const store = fakeStore({ routes: () => [] });
   const handler = await setup(store);
   const groups = {
-    "1@g.us": { subject: "Grupo -16", linkedParent: "comA@g.us" },
-    "2@g.us": { subject: "Niños NR", linkedParent: "comA@g.us" },
+    "1@g.us": { subject: "Grupo -16", linkedParent: COMUNIDAD },
+    "2@g.us": { subject: "Niños NR", linkedParent: COMUNIDAD },
     "3@g.us": { subject: "Otro clan", linkedParent: "comB@g.us" },
   };
   const metaFetch = async () => ({
     subject: "Lobby NR",
-    linkedParent: "comA@g.us",
+    linkedParent: COMUNIDAD,
     participants: [{ id: "573000000077@s.whatsapp.net", admin: "admin" }],
   });
 

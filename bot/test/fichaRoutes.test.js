@@ -73,31 +73,31 @@ test("routeMatches: campo inexistente o ruta sin condiciones no coincide", () =>
 
 test("resolveFichaTargets: envía a todos los grupos que cumplan", () => {
   const routes = [
-    { name: "teens", jid: "1@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
-    { name: "colombia", jid: "2@g.us", conditions: [{ field: "pais", type: "values", values: ["Colombia"] }] },
-    { name: "adultos", jid: "3@g.us", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
+    { name: "teens", jid: "1@g.us", scope: "comunidadA", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "colombia", jid: "2@g.us", scope: "comunidadA", conditions: [{ field: "pais", type: "values", values: ["Colombia"] }] },
+    { name: "adultos", jid: "3@g.us", scope: "comunidadA", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
   ];
-  const result = resolveFichaTargets(routes, FORM, VALUES);
+  const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "comunidadA" });
   assert.deepStrictEqual(result.sends.map((s) => s.jid), ["1@g.us", "2@g.us"]);
   assert.strictEqual(result.fallback, false);
 });
 
 test("resolveFichaTargets: usa los comodines cuando nada encaja", () => {
   const routes = [
-    { name: "adultos", jid: "3@g.us", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
-    { name: "otros", jid: "9@g.us", conditions: [] },
+    { name: "adultos", jid: "3@g.us", scope: "comunidadA", conditions: [{ field: "Edad", type: "range", min: 18, max: 99 }] },
+    { name: "otros", jid: "9@g.us", scope: "comunidadA", conditions: [] },
   ];
-  const result = resolveFichaTargets(routes, FORM, VALUES);
+  const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "comunidadA" });
   assert.deepStrictEqual(result.sends.map((s) => s.jid), ["9@g.us"]);
   assert.strictEqual(result.fallback, true);
 });
 
 test("resolveFichaTargets: no repite el mismo grupo", () => {
   const routes = [
-    { name: "a", jid: "5@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
-    { name: "b", jid: "5@g.us", conditions: [{ field: "pais", type: "values", values: ["Colombia"] }] },
+    { name: "a", jid: "5@g.us", scope: "comunidadA", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "b", jid: "5@g.us", scope: "comunidadA", conditions: [{ field: "pais", type: "values", values: ["Colombia"] }] },
   ];
-  const result = resolveFichaTargets(routes, FORM, VALUES);
+  const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "comunidadA" });
   assert.strictEqual(result.sends.length, 1);
 });
 
@@ -110,19 +110,19 @@ test("resolveFichaTargets: no mezcla comunidades distintas", () => {
   assert.deepStrictEqual(result.sends.map((s) => s.jid), ["1@g.us"]);
 });
 
-test("resolveFichaTargets: una ficha sin comunidad no entra en rutas de comunidad", () => {
+test("resolveFichaTargets: una ficha sin comunidad no entra en ninguna ruta", () => {
   const routes = [
     { name: "comunidad", jid: "1@g.us", scope: "comunidadA", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
-    { name: "global", jid: "2@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+    { name: "suelta", jid: "2@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
   ];
   const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "" });
-  assert.deepStrictEqual(result.sends.map((s) => s.jid), ["2@g.us"]);
+  assert.deepStrictEqual(result.sends, []);
 });
 
-test("resolveFichaTargets: las rutas antiguas sin scope siguen valiendo", () => {
+test("resolveFichaTargets: las rutas sin comunidad ya no valen (cerradas)", () => {
   const routes = [{ name: "vieja", jid: "7@g.us", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] }];
   const result = resolveFichaTargets(routes, FORM, VALUES, { scope: "comunidadA" });
-  assert.deepStrictEqual(result.sends.map((s) => s.jid), ["7@g.us"]);
+  assert.deepStrictEqual(result.sends, []);
 });
 
 test("resolveFichaTargets: sin rutas no hay destinos", () => {

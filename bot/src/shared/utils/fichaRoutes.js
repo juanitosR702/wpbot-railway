@@ -110,15 +110,16 @@ export function routeMatches(route, form, values) {
  * comodines (rutas sin condiciones). Los JID repetidos se envían una sola vez.
  */
 export function resolveFichaTargets(routes, form, values, { scope = "" } = {}) {
-  // `scope` es la comunidad (o el grupo) donde se llenó la ficha: cada comunidad
-  // tiene sus propios grupos y no debe recibir gente de otra. Las rutas sin
-  // `scope` (creadas antes de esto) se mantienen globales.
-  const active = (routes || []).filter((route) => {
-    if (!route?.jid || route.enabled === false) return false;
-    if (!route.scope) return true; // ruta global (grupos sin comunidad de WhatsApp)
-    if (!scope) return false; // la ficha no viene de una comunidad: no se mezcla
-    return route.scope === scope;
-  });
+  // Rutas cerradas: una ruta solo vale dentro de su misma comunidad. Sin
+  // comunidad (ni en la ruta ni en la ficha) no hay coincidencia posible, así
+  // que ninguna ficha puede saltar de comunidad ni llegar a una ruta huérfana.
+  const active = (routes || []).filter((route) => (
+    Boolean(route?.jid)
+    && route.enabled !== false
+    && Boolean(route.scope)
+    && Boolean(scope)
+    && route.scope === scope
+  ));
   const conditional = active.filter((route) => (route.conditions || []).length);
   const wildcards = active.filter((route) => !(route.conditions || []).length);
 
