@@ -28,6 +28,13 @@ test("parseRouteCondition: rango de edad", () => {
   });
 });
 
+test("parseRouteCondition: comparaciones (<, <=, >, >=)", () => {
+  assert.deepStrictEqual(parseRouteCondition("edad<16"), { field: "edad", type: "range", min: 0, max: 15 });
+  assert.deepStrictEqual(parseRouteCondition("edad<=16"), { field: "edad", type: "range", min: 0, max: 16 });
+  assert.deepStrictEqual(parseRouteCondition("edad>16"), { field: "edad", type: "range", min: 17, max: 999 });
+  assert.deepStrictEqual(parseRouteCondition("Edad >= 16"), { field: "Edad", type: "range", min: 16, max: 999 });
+});
+
 test("parseRouteCondition: rango suelto usa el campo Edad", () => {
   const condition = parseRouteCondition("18-99");
   assert.strictEqual(condition.field, "Edad");

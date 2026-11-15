@@ -18,6 +18,7 @@ export function normalizeRouteText(value) {
 /**
  * Convierte un token en condición.
  *   `edad=13-17`            -> rango 13..17 sobre el campo "Edad"
+ *   `edad<16` / `edad>=16`  -> comparación (se guarda como rango)
  *   `pais=colombia|mexico`  -> valores permitidos
  *   `13-17`                 -> rango sobre "Edad" (atajo)
  * Devuelve null si no se entiende (el plugin avisa al admin).
@@ -25,6 +26,21 @@ export function normalizeRouteText(value) {
 export function parseRouteCondition(token) {
   const raw = String(token || "").trim();
   if (!raw) return null;
+
+  // Comparaciones: `edad<16`, `edad>=16`, `edad<=15`, `edad>17`.
+  const comparison = raw.match(/^(.+?)\s*(<=|>=|<|>)\s*(\d{1,3})$/);
+  if (comparison) {
+    const field = comparison[1].trim();
+    const operator = comparison[2];
+    const number = Number(comparison[3]);
+    if (!field || !Number.isFinite(number)) return null;
+    const MIN_AGE = 0;
+    const MAX_AGE = 999;
+    if (operator === "<") return { field, type: "range", min: MIN_AGE, max: number - 1 };
+    if (operator === "<=") return { field, type: "range", min: MIN_AGE, max: number };
+    if (operator === ">") return { field, type: "range", min: number + 1, max: MAX_AGE };
+    return { field, type: "range", min: number, max: MAX_AGE };
+  }
 
   const eq = raw.indexOf("=");
   let field;
@@ -132,7 +148,7 @@ export function renderRoutes(routes) {
       "",
       "No hay ninguna. Añade este grupo con:",
       "• *!rutas aqui <nombre>* — recibe las que no encajen en otra ruta",
-      "• *!rutas aqui <nombre> edad=13-17* — solo ese rango de edad",
+      "• *!rutas aqui <nombre> edad=13-17* o *edad<16* — solo ese rango",
       "• *!rutas aqui <nombre> pais=colombia|mexico* — solo esos valores",
     ].join("\n");
   }
