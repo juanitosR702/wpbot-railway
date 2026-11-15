@@ -155,9 +155,10 @@ export function renderRoutes(routes, { names = {}, communities = {}, origin = nu
       "📥 *Rutas de fichas*",
       "",
       "No hay ninguna. Añade este grupo con:",
-      "• *!rutas aqui <nombre>* — recibe las que no encajen en otra ruta",
-      "• *!rutas aqui <nombre> edad=13-17* o *edad<16* — solo ese rango",
-      "• *!rutas aqui <nombre> pais=colombia|mexico* — solo esos valores",
+      "• *!rutas agregar* — asistente: eliges grupos por número y pones la condición",
+      "• *!rutas aqui* — este mismo grupo, con la condición que escribas",
+      "• Condiciones: *edad<16*, *edad=13-17*, *pais=colombia|mexico*",
+      "• Sin condición = comodín (recibe a quien no encaje en otra ruta)",
     ].join("\n");
   }
 

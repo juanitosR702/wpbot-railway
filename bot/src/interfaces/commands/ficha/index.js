@@ -103,7 +103,11 @@ export const fichaPlugin = {
       const store = await getStore();
       if (typeof store.ready === "function") await store.ready().catch(() => {});
 
-      if (!ctx.isCommand) return handleSession(ctx, store, options);
+      if (!ctx.isCommand) {
+        const wizardReply = await handleRouteWizard(ctx, store, options);
+        if (wizardReply) return wizardReply;
+        return handleSession(ctx, store, options);
+      }
 
       if (ctx.command === "ficha") return startFicha(ctx, store);
       if (ctx.command === "setficha") return configure(ctx, store, options);
@@ -917,6 +921,137 @@ async function safeGroupMetadataOf(ctx, jid) {
   }
 }
 
+// ---- Asistente: !rutas agregar sin argumentos ----
+//
+// Dos pasos y dos mensajes: elegir los grupos por número y escribir la
+// condición. Crear rutas para varios grupos a la vez deja de ser tedioso.
+const ROUTE_WIZARDS = new Map();
+const ROUTE_WIZARD_TTL_MS = 10 * 60 * 1000;
+
+function findRouteWizard(ctx) {
+  for (const id of senderIds(ctx)) {
+    const wizard = ROUTE_WIZARDS.get(`${id}:${ctx.phone}`);
+    if (wizard) return wizard;
+  }
+  return null;
+}
+
+function saveRouteWizard(ctx, wizard) {
+  const ids = senderIds(ctx);
+  if (!ids.length) ids.push(ctx.sender);
+  for (const id of ids) ROUTE_WIZARDS.set(`${id}:${ctx.phone}`, wizard);
+}
+
+function dropRouteWizard(ctx, wizard) {
+  const target = wizard || findRouteWizard(ctx);
+  if (!target) return;
+  for (const [key, value] of ROUTE_WIZARDS) {
+    if (value === target) ROUTE_WIZARDS.delete(key);
+  }
+}
+
+async function startRouteWizard(ctx, store) {
+  const groups = await listBotGroups(ctx);
+  if (!groups.length) {
+    return "⚠️ No pude leer la lista de grupos del bot. Prueba desde un grupo donde el bot esté y sea admin.";
+  }
+
+  const prev = findRouteWizard(ctx);
+  if (prev) dropRouteWizard(ctx, prev);
+
+  const routes = typeof store?.routes === "function" ? store.routes() : [];
+  const conRuta = new Set(routes.map((route) => route.jid));
+  const wizard = { step: "groups", groups, at: Date.now() };
+  saveRouteWizard(ctx, wizard);
+
+  return [
+    "🧭 *Asistente de rutas*",
+    "",
+    "1️⃣ ¿A qué grupos se añade? Responde con los números (puedes poner varios: *1,3*).",
+    "",
+    ...groups.map((group, index) => `${index + 1}. ${group.name}${conRuta.has(group.jid) ? " ✅" : ""}`),
+    "",
+    "_Escribe *cancelar* para salir._",
+  ].join("\n");
+}
+
+async function handleRouteWizard(ctx, store, options) {
+  const wizard = findRouteWizard(ctx);
+  if (!wizard) return null;
+
+  if (Date.now() - wizard.at > ROUTE_WIZARD_TTL_MS) {
+    dropRouteWizard(ctx, wizard);
+    return "⌛ El asistente caducó. Empieza de nuevo con *!rutas agregar*.";
+  }
+
+  const auth = await getAdmin(ctx, options.ownerPolicy);
+  if (!auth.ok) return auth.reason;
+
+  const text = String(ctx.text || "").trim();
+  if (/^(cancelar|cancel|salir)$/i.test(text)) {
+    dropRouteWizard(ctx, wizard);
+    return "❌ Asistente cancelado.";
+  }
+
+  wizard.at = Date.now();
+
+  if (wizard.step === "groups") {
+    const picked = text
+      .split(/[,\s]+/)
+      .map((token) => Number.parseInt(token, 10))
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= wizard.groups.length);
+    if (!picked.length) {
+      return `⚠️ Responde con los números de la lista (ej: *1,3*), entre 1 y ${wizard.groups.length}, o *cancelar*.`;
+    }
+
+    wizard.selected = [...new Set(picked)].map((n) => wizard.groups[n - 1]);
+    wizard.step = "condition";
+    return [
+      `👥 Elegidos: ${wizard.selected.map((group) => `*${group.name}*`).join(", ")}`,
+      "",
+      "2️⃣ ¿Qué condición deben cumplir? Escríbela tal cual:",
+      "• *edad<16*",
+      "• *edad>=16*",
+      "• *pais=colombia|mexico*",
+      "• *listo* si no lleva condición (recibe a quien no encaje en otra ruta)",
+      "",
+      "_Puedes combinar: *edad>=16 pais=colombia*. *cancelar* para salir._",
+    ].join("\n");
+  }
+
+  if (wizard.step === "condition") {
+    const raw = ["listo", "sin", "ninguna", "comodin"].includes(normalize(text)) ? "" : text;
+    const parsed = parseRouteArgs(raw.split(/\s+/).filter(Boolean));
+    if (parsed.error) return parsed.error;
+
+    const created = [];
+    for (const target of wizard.selected || []) {
+      created.push(store.addRoute({
+        name: target.name,
+        jid: target.jid,
+        scope: target.scope || "",
+        invite: parsed.invite,
+        conditions: parsed.conditions,
+        enabled: true,
+        updatedBy: ctx.sender,
+      }));
+    }
+    await store.save();
+    dropRouteWizard(ctx, wizard);
+
+    const detalle = parsed.conditions.length
+      ? parsed.conditions.map(describeCondition).join(" · ")
+      : "comodín (sin condiciones)";
+    return [
+      `✅ ${created.length} ruta${created.length > 1 ? "s" : ""} creada${created.length > 1 ? "s" : ""}: ${created.map((route) => `*${route.name}*`).join(", ")}`,
+      `Condición: ${detalle}`,
+      "Míralas con *!rutas ver*.",
+    ].join("\n");
+  }
+
+  return null;
+}
+
 async function manageRoutes(ctx, store, options) {
   if (!ctx.isGroup) return MSG.SOLO_GRUPOS;
 
@@ -984,18 +1119,7 @@ async function manageRoutes(ctx, store, options) {
 
   if (["agregar", "anadir"].includes(action)) {
     const tokens = String(ctx.commandBody || "").trim().split(/\s+/).filter(Boolean).slice(1);
-    if (!tokens.length) {
-      return [
-        "Uso: *!rutas agregar <nombre del grupo> [condiciones]*",
-        "",
-        "Ejemplos:",
-        "• *!rutas agregar Grupo -16 edad<16*",
-        "• *!rutas agregar +17 actividades NR edad>=16*",
-        "• *!rutas agregar Grupo -16 edad<16 link=auto*",
-        "",
-        "Mira los nombres exactos con *!rutas grupos*.",
-      ].join("\n");
-    }
+    if (!tokens.length) return startRouteWizard(ctx, store);
 
     const isConditionToken = (token) => /link=/i.test(token) || /[=<>]/.test(token) || /^\d+-\d+$/.test(token);
     const nameTokens = [];

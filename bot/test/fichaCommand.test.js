@@ -522,3 +522,68 @@ test("rutas: !rutas grupos lista los grupos del bot con nombre", async () => {
   assert.match(reply, /✅ Grupo -16/);
   assert.match(reply, /• \+17 actividades NR/);
 });
+
+test("rutas: el asistente crea varias rutas en dos respuestas", async () => {
+  const routes = [];
+  const store = fakeStore({
+    routes: () => routes,
+    addRoute: (route) => {
+      routes.push(route);
+      return route;
+    },
+  });
+  const handler = await setup(store);
+  const groups = {
+    "1@g.us": { subject: "Grupo -16", linkedParent: "com@g.us" },
+    "2@g.us": { subject: "Niños NR", linkedParent: "com@g.us" },
+    "3@g.us": { subject: "+17 actividades NR", linkedParent: "com@g.us" },
+  };
+  const services = { listGroups: async () => groups };
+
+  const { ctx } = makeCtxWithSender(71, { commandBody: "agregar", services: { ...makeCtx().ctx.services, ...services } });
+  const listado = await handler({ ...ctx, isCommand: true, command: "rutas", args: ["agregar"] });
+  assert.match(listado, /Asistente de rutas/);
+  assert.match(listado, /1\. Grupo -16/);
+  assert.match(listado, /3\. \+17 actividades NR/);
+
+  const paso2 = await handler({ ...ctx, isCommand: false, text: "1,2" });
+  assert.match(paso2, /Grupo -16/);
+  assert.match(paso2, /Niños NR/);
+  assert.match(paso2, /edad<16/);
+
+  const final = await handler({ ...ctx, isCommand: false, text: "edad<16" });
+  assert.strictEqual(routes.length, 2);
+  assert.deepStrictEqual(routes.map((route) => route.jid), ["1@g.us", "2@g.us"]);
+  assert.strictEqual(routes[0].scope, "com@g.us");
+  assert.deepStrictEqual(routes[0].conditions, [{ field: "edad", type: "range", min: 0, max: 15 }]);
+  assert.match(final, /2 rutas creadas/);
+});
+
+test("rutas: el asistente acepta 'listo' como comodín y cancelar", async () => {
+  const routes = [];
+  const store = fakeStore({
+    routes: () => routes,
+    addRoute: (route) => {
+      routes.push(route);
+      return route;
+    },
+  });
+  const handler = await setup(store);
+  const groups = { "9@g.us": { subject: "Grupo Comodín" } };
+  const base = makeCtx().ctx.services;
+
+  const a = makeCtxWithSender(72, { commandBody: "agregar", services: { ...base, listGroups: async () => groups } });
+  await handler({ ...a.ctx, isCommand: true, command: "rutas", args: ["agregar"] });
+  await handler({ ...a.ctx, isCommand: false, text: "1" });
+  const final = await handler({ ...a.ctx, isCommand: false, text: "listo" });
+  assert.strictEqual(routes.length, 1);
+  assert.deepStrictEqual(routes[0].conditions, []);
+  assert.match(final, /comodín/);
+
+  const b = makeCtxWithSender(73, { commandBody: "agregar", services: { ...base, listGroups: async () => groups } });
+  await handler({ ...b.ctx, isCommand: true, command: "rutas", args: ["agregar"] });
+  const cancelado = await handler({ ...b.ctx, isCommand: false, text: "cancelar" });
+  assert.match(cancelado, /cancelado/);
+  // Ya cancelado, el texto vuelve a fluir sin respuesta.
+  assert.strictEqual(await handler({ ...b.ctx, isCommand: false, text: "1" }), null);
+});
