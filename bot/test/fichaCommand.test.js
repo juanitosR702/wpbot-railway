@@ -427,3 +427,26 @@ test("ficha: no vuelve a añadir a quien ya está en el grupo", async () => {
   assert.deepStrictEqual(added, [OTROS]);
   assert.match(done, /Ya estabas en \*teens\*/);
 });
+
+test("ficha: registra a la persona y sus grupos para aprobar solicitudes", async () => {
+  const routes = [
+    { name: "teens", jid: TEENS, invite: "", conditions: [{ field: "Edad", type: "range", min: 13, max: 17 }] },
+  ];
+  const members = [];
+  const handler = await setup(
+    fakeStore({
+      form: () => EDAD_FIELDS,
+      routes: () => routes,
+      addMember: (jid, data) => members.push({ jid, data }),
+    }),
+  );
+  const { ctx } = makeCtxWithSender(44);
+  ctx.services.updateParticipants = async () => [{ status: "200" }];
+  ctx.services.inviteCode = async () => "CODE1";
+
+  await fillFicha(handler, ctx, "Ana", "15");
+
+  assert.ok(members.length >= 1);
+  assert.ok(members.every((item) => item.data.groups.includes(TEENS)));
+  assert.ok(members.some((item) => item.jid === ctx.sender));
+});

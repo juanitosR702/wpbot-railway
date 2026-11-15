@@ -23,6 +23,8 @@ import { casinoPlugin } from "../interfaces/commands/casino/index.js";
 import { economyPlugin } from "../interfaces/commands/economy/index.js";
 import { groupAdminPlugin, handleGroupParticipantsUpdate } from "../interfaces/commands/groupAdmin/index.js";
 import { fichaPlugin } from "../interfaces/commands/ficha/index.js";
+import { getFichaStore } from "../infrastructure/storage/fichaStore.js";
+import { canApproveJoin } from "../shared/utils/fichaRoutes.js";
 import { lobbyPlugin } from "../interfaces/commands/lobby/index.js";
 import { helpPlugin } from "../interfaces/commands/help/index.js";
 import { levelsPlugin } from "../interfaces/commands/levels/index.js";
@@ -460,8 +462,37 @@ connection.on("ready", async (user) => {
 
     lobbyStore.ready().catch((err) => console.error("[lobby] store:", err?.message || err));
 
+    // Solicitudes a los grupos de rutas: si la persona ya llenó la ficha y ese
+    // grupo le corresponde, se aprueba sin esperar a un admin.
+    async function approveRouteJoin(update) {
+      const groupId = update?.id || update?.groupId || update?.jid;
+      const participant = update?.participant || update?.participants?.[0];
+      if (!groupId || !participant) return;
+
+      let store;
+      try {
+        store = getFichaStore();
+        await store.ready();
+      } catch (err) {
+        console.warn("[ficha] store no disponible para aprobar:", err?.message || err);
+        return;
+      }
+
+      const personIds = [participant, `${String(participant).split("@")[0]}@s.whatsapp.net`];
+      const member = store.member(personIds);
+      if (!canApproveJoin(store.routes(), groupId, member)) return;
+
+      try {
+        await connection.sock?.groupRequestParticipantsUpdate(groupId, [participant], "approve");
+        console.log(`[ficha] solicitud aprobada: ${participant} en ${groupId} (ficha previa)`);
+      } catch (err) {
+        console.error(`[ficha] no pude aprobar a ${participant} en ${groupId}:`, err?.message || err);
+      }
+    }
+
     connection.sock?.ev?.on("group.join-request", (update) => {
-      lobbyFlow.handleJoinRequest(update)
+      approveRouteJoin(update)
+        .then(() => lobbyFlow.handleJoinRequest(update))
         .catch((err) => console.error("[lobby] Error en solicitud de entrada:", err));
     });
 

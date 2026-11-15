@@ -1,11 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import {
-  parseRouteCondition,
-  routeMatches,
-  resolveFichaTargets,
-  renderRoutes,
-} from "../src/shared/utils/fichaRoutes.js";
+import { parseRouteCondition, routeMatches, resolveFichaTargets, renderRoutes, canApproveJoin } from "../src/shared/utils/fichaRoutes.js";
 
 const FORM = {
   fields: [
@@ -186,4 +181,23 @@ test("renderRoutes: agrupa todos los grupos que comparten condición", () => {
   const b = texto.indexOf("Grupo B");
   const c = texto.indexOf("Grupo C");
   assert.ok(a < b && b < c, "los grupos de 16+ deben ir juntos");
+});
+
+test("canApproveJoin: solo aprueba si la ficha incluye ese grupo de ruta", () => {
+  const routes = [
+    { name: "teens", jid: "1@g.us", conditions: [] },
+    { name: "adultos", jid: "2@g.us", conditions: [], enabled: false },
+  ];
+  const member = { groups: ["1@g.us"] };
+
+  assert.strictEqual(canApproveJoin(routes, "1@g.us", member), true);
+  // No es destino de ninguna ruta.
+  assert.strictEqual(canApproveJoin(routes, "9@g.us", member), false);
+  // Ruta desactivada.
+  assert.strictEqual(canApproveJoin(routes, "2@g.us", { groups: ["2@g.us"] }), false);
+  // La ficha no lo incluyó (no cumple las condiciones).
+  assert.strictEqual(canApproveJoin(routes, "1@g.us", { groups: [] }), false);
+  assert.strictEqual(canApproveJoin(routes, "1@g.us", null), false);
+  // Ruta comodín (sin condiciones) también vale si la ficha lo incluyó.
+  assert.strictEqual(canApproveJoin([{ jid: "3@g.us", conditions: [] }], "3@g.us", { groups: ["3@g.us"] }), true);
 });

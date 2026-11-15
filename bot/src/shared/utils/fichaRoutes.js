@@ -212,3 +212,15 @@ export function renderRoutes(routes, { names = {}, communities = {}, origin = nu
 
   return lines.join("\n");
 }
+
+/**
+ * ¿Se puede aprobar una solicitud de entrada a `groupId`? Solo si ese grupo es
+ * destino de una ruta activa y la persona ya llenó la ficha y quedó incluida
+ * en él. Es puro: el plugin no decide permisos, solo compara datos guardados.
+ */
+export function canApproveJoin(routes, groupId, member) {
+  if (!groupId || !member) return false;
+  const route = (routes || []).find((item) => item?.jid === groupId && item?.enabled !== false);
+  if (!route) return false;
+  return (member.groups || []).includes(groupId);
+}

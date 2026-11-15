@@ -12,7 +12,7 @@ export class FichaStore extends BaseStore {
   }
 
   _defaultState() {
-    return { destination: "", routes: [], forms: {} };
+    return { destination: "", routes: [], forms: {}, members: {} };
   }
 
   form(jid) {
@@ -42,6 +42,43 @@ export class FichaStore extends BaseStore {
 
   setDestination(jid) {
     this.state.destination = jid || "";
+  }
+
+  /**
+   * Personas que ya llenaron la ficha: `{ <jid>: { groups: [jid…], at } }`.
+   * Sirve para aprobar solicitudes de entrada a los grupos de sus rutas.
+   */
+  members() {
+    return this.state.members || {};
+  }
+
+  addMember(jid, data = {}) {
+    const clean = String(jid || "").trim();
+    if (!clean) return null;
+    if (!this.state.members) this.state.members = {};
+    const prev = this.state.members[clean] || {};
+    this.state.members[clean] = {
+      groups: [...new Set([...(prev.groups || []), ...(data.groups || [])])],
+      at: Date.now(),
+    };
+    return this.state.members[clean];
+  }
+
+  /** Busca la ficha de la persona por teléfono o LID (compara solo los dígitos). */
+  member(ids = []) {
+    const members = this.members();
+    const wanted = new Set(
+      (Array.isArray(ids) ? ids : [ids])
+        .filter(Boolean)
+        .map((id) => String(id).split("@")[0].replace(/\D/g, ""))
+        .filter(Boolean),
+    );
+    if (!wanted.size) return null;
+    for (const [jid, data] of Object.entries(members)) {
+      const digits = String(jid).split("@")[0].replace(/\D/g, "");
+      if (wanted.has(digits)) return { jid, ...data };
+    }
+    return null;
   }
 
   routes() {

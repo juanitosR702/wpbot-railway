@@ -561,6 +561,18 @@ async function deliverByRoutes(ctx, store, session) {
     }
   }
 
+  // Queda registrada para aprobar su solicitud si entra con el link.
+  try {
+    const memberJids = [...new Set([personJid, ...addCandidates(ctx)])].filter(
+      (id) => id.endsWith("@s.whatsapp.net") || id.endsWith("@lid"),
+    );
+    for (const id of memberJids) {
+      store.addMember?.(id, { groups: sends.map((target) => target.jid) });
+    }
+  } catch (err) {
+    console.warn("[ficha] no pude registrar la ficha para aprobaciones:", err?.message || err);
+  }
+
   console.log(`[ficha] rutas${fallback ? " (comodín)" : ""}: añadidos=${added.length} ya_estaba=${already.length} link=${invited.length} fallos=${failed.length}`);
 
   const notes = [];
