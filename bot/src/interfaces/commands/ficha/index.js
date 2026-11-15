@@ -1098,20 +1098,38 @@ async function manageRoutes(ctx, store, options) {
 
   if (!action || ["ver", "lista", "listar"].includes(action)) {
     const meta = await safeGroupMetadata(ctx);
-    const names = await groupNames(ctx, routes);
-    const communities = await groupNamesFor(ctx, [...new Set(routes.map((route) => route.scope).filter(Boolean))]);
-    for (const [scope, subject] of Object.entries(await groupNamesFor(ctx, meta?.linkedParent ? [meta.linkedParent] : []))) {
+    const originScope = meta?.linkedParent || "";
+    const showAll = ["todas", "todos", "all"].includes(normalize(ctx.args[1] || ""));
+
+    // Solo las rutas que aplican aquí: las de esta comunidad y las globales.
+    // Las de otra comunidad no se mezclan en la lista.
+    const visibles = originScope && !showAll
+      ? routes.filter((route) => !route.scope || route.scope === originScope)
+      : routes;
+    const ocultas = routes.length - visibles.length;
+
+    const names = await groupNames(ctx, visibles);
+    const communities = await groupNamesFor(ctx, [...new Set(visibles.map((route) => route.scope).filter(Boolean))]);
+    for (const [scope, subject] of Object.entries(await groupNamesFor(ctx, originScope ? [originScope] : []))) {
       communities[scope] = subject;
     }
-    return renderRoutes(routes, {
+
+    const texto = renderRoutes(visibles, {
       names,
       communities,
       origin: {
         jid: currentGroupJid(ctx),
         name: meta?.subject || "",
-        scope: meta?.linkedParent || "",
+        scope: originScope,
       },
     });
+
+    if (!ocultas) return texto;
+    return [
+      texto,
+      "",
+      `_Hay ${ocultas} ruta${ocultas > 1 ? "s" : ""} de otra comunidad. Verlas con *!rutas ver todas*._`,
+    ].join("\n");
   }
 
   if (["limpiar", "reset", "vaciar"].includes(action)) {

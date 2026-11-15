@@ -656,3 +656,45 @@ test("rutas: !rutas agregar rechaza un destino sin comunidad cuando aquí sí ha
 
   assert.match(reply, /no reporta comunidad/);
 });
+
+test("rutas: !rutas ver solo muestra las de la comunidad del grupo", async () => {
+  const routes = [
+    { name: "aquí", jid: TEENS, scope: "comA@g.us", conditions: [] },
+    { name: "global", jid: ADULTOS, scope: "", conditions: [] },
+    { name: "ajena", jid: OTROS, scope: "comB@g.us", conditions: [] },
+  ];
+  const handler = await setup(fakeStore({ routes: () => routes }));
+  const metaFetch = async (jid) => ({
+    [TEENS]: { subject: "Grupo -16" },
+    [ADULTOS]: { subject: "+17 actividades NR" },
+    [OTROS]: { subject: "Otro clan" },
+  }[jid] || {
+    subject: "Lobby NR",
+    linkedParent: "comA@g.us",
+    participants: [{ id: "573000000076@s.whatsapp.net", admin: "admin" }],
+  });
+
+  const { ctx } = makeCtxWithSender(76, { commandBody: "ver", getGroupMetadata: metaFetch });
+  const reply = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["ver"],
+    services: { ...ctx.services, getGroupMetadata: metaFetch },
+  });
+
+  assert.match(reply, /aquí/);
+  assert.match(reply, /global/);
+  assert.strictEqual(reply.includes("ajena"), false);
+  assert.match(reply, /1 ruta de otra comunidad/);
+
+  const todas = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["ver", "todas"],
+    commandBody: "ver todas",
+    services: { ...ctx.services, getGroupMetadata: metaFetch },
+  });
+  assert.match(todas, /ajena/);
+});
