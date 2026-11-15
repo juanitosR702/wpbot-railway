@@ -961,7 +961,8 @@ async function startRouteWizard(ctx, store) {
 
   const routes = typeof store?.routes === "function" ? store.routes() : [];
   const conRuta = new Set(routes.map((route) => route.jid));
-  const wizard = { step: "groups", groups, at: Date.now() };
+  const originMeta = await safeGroupMetadata(ctx);
+  const wizard = { step: "groups", groups, originScope: originMeta?.linkedParent || "", at: Date.now() };
   saveRouteWizard(ctx, wizard);
 
   return [
@@ -1025,11 +1026,17 @@ async function handleRouteWizard(ctx, store, options) {
     if (parsed.error) return parsed.error;
 
     const created = [];
+    const rejected = [];
     for (const target of wizard.selected || []) {
+      const { scope, error } = await resolveTargetScope(ctx, target, wizard.originScope);
+      if (error) {
+        rejected.push(error.replace(/^⚠️ /, "").split("\n")[0]);
+        continue;
+      }
       created.push(store.addRoute({
         name: target.name,
         jid: target.jid,
-        scope: target.scope || "",
+        scope,
         invite: parsed.invite,
         conditions: parsed.conditions,
         enabled: true,
@@ -1042,14 +1049,42 @@ async function handleRouteWizard(ctx, store, options) {
     const detalle = parsed.conditions.length
       ? parsed.conditions.map(describeCondition).join(" · ")
       : "comodín (sin condiciones)";
-    return [
-      `✅ ${created.length} ruta${created.length > 1 ? "s" : ""} creada${created.length > 1 ? "s" : ""}: ${created.map((route) => `*${route.name}*`).join(", ")}`,
-      `Condición: ${detalle}`,
-      "Míralas con *!rutas ver*.",
-    ].join("\n");
+    const lines = [];
+    if (created.length) {
+      lines.push(`✅ ${created.length} ruta${created.length > 1 ? "s" : ""} creada${created.length > 1 ? "s" : ""}: ${created.map((route) => `*${route.name}*`).join(", ")}`);
+      lines.push(`Condición: ${detalle}`);
+    }
+    if (rejected.length) {
+      lines.push("", "🚫 No creé:", ...rejected.map((item) => `• ${item}`));
+    }
+    lines.push("Míralas con *!rutas ver*.");
+    return lines.join("\n");
   }
 
   return null;
+}
+
+// Rechaza destinos de otra comunidad (o sin comunidad cuando aquí sí la hay):
+// una ruta global recibiría fichas de todas las comunidades del bot.
+async function resolveTargetScope(ctx, target, originScope) {
+  const meta = await safeGroupMetadataOf(ctx, target.jid);
+  const scope = target.scope || meta?.linkedParent || "";
+  const origin = originScope || "";
+
+  if (!origin) return { scope, error: "" };
+  if (!scope) {
+    return {
+      scope: "",
+      error: `⚠️ *${target.name}* no reporta comunidad, así que la ruta sería global y recibiría fichas de todas las comunidades.\nCrea esa ruta desde dentro del grupo.`,
+    };
+  }
+  if (scope !== origin) {
+    return {
+      scope,
+      error: `⚠️ *${target.name}* es de otra comunidad.\nCrea esa ruta desde un grupo de esa comunidad (con *!rutas agregar* allí) para no mezclar fichas.`,
+    };
+  }
+  return { scope, error: "" };
 }
 
 async function manageRoutes(ctx, store, options) {
@@ -1153,8 +1188,9 @@ async function manageRoutes(ctx, store, options) {
     }
 
     const target = matches[0];
-    const targetMeta = await safeGroupMetadataOf(ctx, target.jid);
-    const scope = target.scope || targetMeta?.linkedParent || "";
+    const originMeta = await safeGroupMetadata(ctx);
+    const { scope, error } = await resolveTargetScope(ctx, target, originMeta?.linkedParent || "");
+    if (error) return error;
 
     const route = store.addRoute({
       name: target.name,

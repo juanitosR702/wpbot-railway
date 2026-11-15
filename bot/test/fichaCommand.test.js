@@ -587,3 +587,72 @@ test("rutas: el asistente acepta 'listo' como comodín y cancelar", async () => 
   // Ya cancelado, el texto vuelve a fluir sin respuesta.
   assert.strictEqual(await handler({ ...b.ctx, isCommand: false, text: "1" }), null);
 });
+
+test("rutas: el asistente no crea rutas de grupos de otra comunidad", async () => {
+  const routes = [];
+  const store = fakeStore({
+    routes: () => routes,
+    addRoute: (route) => {
+      routes.push(route);
+      return route;
+    },
+  });
+  const handler = await setup(store);
+  const groups = {
+    "1@g.us": { subject: "Mismo clan" },
+    "2@g.us": { subject: "Otro clan" },
+    "3@g.us": { subject: "Sin comunidad" },
+  };
+  const meta = (jid) => ({
+    "1@g.us": { subject: "Mismo clan", linkedParent: "comA@g.us" },
+    "2@g.us": { subject: "Otro clan", linkedParent: "comB@g.us" },
+    "3@g.us": { subject: "Sin comunidad" },
+  }[jid] || { subject: "Lobby", linkedParent: "comA@g.us", participants: [{ id: "573000000074@s.whatsapp.net", admin: "admin" }] });
+
+  const metaFetch = async (jid) => meta(jid);
+  const { ctx } = makeCtxWithSender(74, {
+    commandBody: "agregar",
+    getGroupMetadata: metaFetch,
+    services: { ...makeCtx().ctx.services, listGroups: async () => groups, getGroupMetadata: metaFetch },
+  });
+
+  await handler({ ...ctx, isCommand: true, command: "rutas", args: ["agregar"] });
+  await handler({ ...ctx, isCommand: false, text: "1,2,3" });
+  const final = await handler({ ...ctx, isCommand: false, text: "edad<16" });
+
+  assert.strictEqual(routes.length, 1);
+  assert.strictEqual(routes[0].jid, "1@g.us");
+  assert.strictEqual(routes[0].scope, "comA@g.us");
+  assert.match(final, /Otro clan\* es de otra comunidad/);
+  assert.match(final, /Sin comunidad\* no reporta comunidad/);
+});
+
+test("rutas: !rutas agregar rechaza un destino sin comunidad cuando aquí sí hay", async () => {
+  const handler = await setup(
+    fakeStore({
+      routes: () => [],
+      addRoute: () => {
+        throw new Error("no debía crear la ruta");
+      },
+    }),
+  );
+  const { ctx } = makeCtxWithSender(75, { commandBody: "agregar Suelto edad<16" });
+  const services = {
+    ...makeCtx().ctx.services,
+    listGroups: async () => ({ "5@g.us": { subject: "Suelto" } }),
+    getGroupMetadata: async (jid) => (jid === "5@g.us"
+      ? { subject: "Suelto" }
+      : { subject: "Lobby", linkedParent: "comA@g.us", participants: [{ id: "573000000075@s.whatsapp.net", admin: "admin" }] }),
+  };
+
+  const reply = await handler({
+    ...ctx,
+    isCommand: true,
+    command: "rutas",
+    args: ["agregar", "Suelto", "edad<16"],
+    services,
+    getGroupMetadata: services.getGroupMetadata,
+  });
+
+  assert.match(reply, /no reporta comunidad/);
+});
