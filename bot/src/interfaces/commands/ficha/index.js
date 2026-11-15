@@ -749,7 +749,11 @@ async function manageRoutes(ctx, store, options) {
   const routes = typeof store.routes === "function" ? store.routes() : [];
 
   if (!action || ["ver", "lista", "listar"].includes(action)) {
-    return renderRoutes(routes, { names: await groupNames(ctx, routes) });
+    const meta = await safeGroupMetadata(ctx);
+    return renderRoutes(routes, {
+      names: await groupNames(ctx, routes),
+      origin: { jid: `${ctx.phone}@g.us`, scope: meta?.linkedParent || "" },
+    });
   }
 
   if (["limpiar", "reset", "vaciar"].includes(action)) {

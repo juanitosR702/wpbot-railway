@@ -148,7 +148,7 @@ export function describeCondition(condition) {
 }
 
 /** Listado de rutas configuradas. */
-export function renderRoutes(routes, { names = {} } = {}) {
+export function renderRoutes(routes, { names = {}, origin = null } = {}) {
   const list = routes || [];
   if (!list.length) {
     return [
@@ -178,5 +178,16 @@ export function renderRoutes(routes, { names = {} } = {}) {
   });
   lines.push("", "La ficha se publica en el grupo de almacén y el bot añade a la persona");
   lines.push("a todos los grupos de *su misma comunidad* cuyas condiciones se cumplan.");
+
+  if (origin?.jid) {
+    lines.push("", "─────", `📍 Este grupo: ${origin.jid}`);
+    lines.push(origin.scope ? `🏘 Comunidad: ${origin.scope}` : "🏘 Comunidad: ninguna (grupo suelto)");
+    const scopes = [...new Set(list.map((route) => route.scope || ""))];
+    const ajenas = scopes.filter((scope) => scope && scope !== origin.scope);
+    if (ajenas.length) {
+      lines.push("⚠️ Hay rutas de otra comunidad: desde aquí no se aplicarían.");
+    }
+  }
+
   return lines.join("\n");
 }

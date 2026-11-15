@@ -141,5 +141,11 @@ test("renderRoutes: explica cómo crear la primera ruta", () => {
   assert.match(texto, /teens/);
   assert.match(texto, /13–17/);
   assert.match(texto, /nombre no disponible/);
+  const conOrigen = renderRoutes(
+    [{ name: "t", jid: "1@g.us", scope: "comunidadA", conditions: [] }],
+    { origin: { jid: "9@g.us", scope: "" } },
+  );
+  assert.match(conOrigen, /ninguna \(grupo suelto\)/);
+  assert.match(conOrigen, /otra comunidad/);
   assert.match(renderRoutes([{ name: "t", jid: "1@g.us", conditions: [] }], { names: { "1@g.us": "Clan Teens" } }), /Clan Teens/);
 });
