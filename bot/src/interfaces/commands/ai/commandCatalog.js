@@ -64,7 +64,7 @@ const INFO = {
   // ---- Fichas de ingreso ----
   ficha: { desc: "Rellena la ficha de ingreso del grupo paso a paso (menú desplegable)", level: U, keywords: ["ficha", "formulario", "ingreso", "registro", "unirme", "solicitud"], groupOnly: true },
   setficha: {
-    desc: "Configura la ficha de ingreso del grupo. Con `importar` se pega la ficha completa de una vez (marcadores ENCABEZADO:, CAMPOS, PIE:; dentro, '# SECCION', 'Campo | op1, op2', 'Campo')",
+    desc: "Configura la ficha de ingreso del grupo. Con `importar` se pega la ficha completa de una vez (marcadores ENCABEZADO:, CAMPOS, PIE:; dentro, '# SECCION', 'Campo | op1, op2', 'Campo'). En CAMPOS solo van preguntas: las reglas y avisos van al PIE, no como campos",
     usage: "!setficha importar <ficha> | !setficha ver | !setficha dragon | !setficha reset",
     level: A,
     keywords: ["configurar ficha", "pegar ficha", "cargar ficha", "crear formulario", "formulario de admisión", "preguntas de ingreso", "ghost dragons"],

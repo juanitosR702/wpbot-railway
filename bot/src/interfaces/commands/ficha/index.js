@@ -562,7 +562,48 @@ async function configure(ctx, store, options) {
     const custom = store.form(ctx.phone);
     const form = custom || DEFAULT_FICHA;
     const note = custom ? "" : "\n_(usando la ficha por defecto)_";
-    return `⚙️ *Ficha de este grupo*${note}\n\n${renderFormConfig(form)}`;
+    return [
+      `⚙️ *Ficha de este grupo*${note}`,
+      "",
+      renderFormConfig(form),
+      "",
+      `Para cambiarla: *${ctx.prefix}setficha importar* (pegas el texto) o *${ctx.prefix}setficha guia*.`,
+    ].join("\n");
+  }
+
+  if (["guia", "guía", "ayuda", "como", "cómo", "ejemplo"].includes(action)) {
+    return [
+      "🧭 *Cómo configurar la ficha*",
+      "",
+      `*Forma rápida:* escribe *${ctx.prefix}setficha importar* y debajo pega la ficha completa.`,
+      "",
+      "Ejemplo (cópialo y cámbialo):",
+      `${ctx.prefix}setficha importar`,
+      "🐉 FICHA DE INGRESO",
+      "CAMPOS",
+      "# DATOS DEL INTEGRANTE",
+      "Nombre o apodo",
+      "Edad",
+      "País | Colombia, México, Perú, Otro",
+      "# COMPROMISO",
+      "¿Aceptas las reglas? | Sí, No",
+      "PIE: Gracias por tu interés.",
+      "",
+      "*Qué es cada cosa:*",
+      "• Lo que va *antes* de CAMPOS = encabezado (título de la ficha).",
+      "• Cada línea de CAMPOS = *una pregunta*, salvo `# SECCION`.",
+      "• `Campo | a, b, c` = desplegable (máx. 9 opciones).",
+      "• Las *reglas* (viñetas, “1. …”, frases) NO se preguntan: se guardan como texto de cierre.",
+      "• `PIE:` = despedida final.",
+      "",
+      "*Otras formas:*",
+      `• *${ctx.prefix}setficha* — asistente de 3 pasos (encabezado, campos, pie).`,
+      `• *${ctx.prefix}setficha dragon* — instala la ficha de GHOST DRAGONS.`,
+      `• *${ctx.prefix}setficha ver* — muestra la ficha actual.`,
+      `• *${ctx.prefix}setficha reset* — vuelve a la genérica.`,
+      "",
+      `Los filtros de admisión (edad mínima, países) van aparte: *${ctx.prefix}lobby filtros*.`,
+    ].join("\n");
   }
 
   // Carga de una sola vez: el admin (o la IA) pega la ficha completa y se
@@ -595,11 +636,17 @@ async function configure(ctx, store, options) {
     store.setForm(ctx.phone, form, ctx.sender);
     await store.save();
 
+    const reglas = Number(form.notes) || 0;
+    const notaReglas = reglas
+      ? `_${reglas} línea(s) de reglas guardadas como texto de cierre (no se preguntan)._`
+      : "";
+
     return [
       "✅ *Ficha guardada para este grupo.*",
       "",
       renderFormConfig(form),
       "",
+      notaReglas,
       "Los miembros ya pueden llenarla con *!ficha*.",
       `Ajusta los filtros con *${ctx.prefix}lobby filtros edad=18; paises=Colombia, México* (o *${ctx.prefix}lobby filtros* para verlos).`,
     ].join("\n");

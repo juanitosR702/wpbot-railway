@@ -92,13 +92,19 @@ export const FICHA_PRESETS = {
  *
  * Lanza Error con un mensaje claro si algo no sirve (el plugin lo responde).
  */
-export function parseFieldLines(text) {
+export function parseFieldLines(text, prose = null) {
   const lines = String(text || "").split(/\r?\n/);
   const fields = [];
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) continue;
+
+    // Reglas o narración: no se preguntan, se guardan como texto de cierre.
+    if (prose && isProseLine(line)) {
+      prose.push(line);
+      continue;
+    }
 
     if (line.startsWith("#")) {
       const section = line.replace(/^#+\s*/, "").trim();
@@ -125,7 +131,23 @@ export function parseFieldLines(text) {
     throw new Error("La ficha necesita al menos un campo (ej: `Nombre o apodo`).");
   }
 
-  return fields;
+  // Secciones sin ningún campo detrás (típico de "# REGLAS" cuyas líneas son
+  // texto) se quitan: mostrarían un título vacío en la ficha.
+  const cleaned = [];
+  let pendingSection = null;
+  for (const field of fields) {
+    if (field.section) {
+      pendingSection = field;
+      continue;
+    }
+    if (pendingSection) {
+      cleaned.push(pendingSection);
+      pendingSection = null;
+    }
+    cleaned.push(field);
+  }
+
+  return cleaned;
 }
 
 // Ficha completa pegada de una sola vez (lo que hace la IA o un admin que ya
@@ -231,11 +253,36 @@ export function parseFichaText(text) {
     ? blocks.fields.join("\n")
     : [...preamble, ...blocks.fields].join("\n");
 
+  const prose = [];
+  const fields = parseFieldLines(fieldsText, prose);
+
+  // Lo que era una regla suelta pasa al texto de cierre, antes del pie real.
+  const footer = [...prose, ...blocks.footer].join("\n").trim();
+
   return {
     header: headerLines.join("\n").trim(),
-    footer: blocks.footer.join("\n").trim(),
-    fields: parseFieldLines(fieldsText),
+    footer,
+    fields,
+    notes: prose.length,
   };
+}
+
+/**
+ * ¿La línea es una regla/narración en vez de una pregunta?
+ *
+ * Sin esto, pegar una ficha con "1. Respetar a los admins" creaba un campo
+ * que el bot le preguntaba al usuario. Lo que se detecta aquí se guarda como
+ * texto de cierre, no como campo.
+ */
+export function isProseLine(line) {
+  const text = String(line || "").trim();
+  if (!text) return false;
+  if (text.includes("|")) return false; // "Campo | op1, op2" siempre es campo
+  if (/^(\d+[.)]|[-•*–—+])\s+\S/.test(text)) return true;
+  if (/^(reglas?|normas?|requisitos?|prohibido|importante)\b/i.test(text) && text.length > 20) return true;
+  if (text.endsWith(":") && text.split(/\s+/).length > 3) return true;
+  if (text.length > 70 && /[.!?]$/.test(text)) return true;
+  return false;
 }
 
 function parseOptions(raw) {

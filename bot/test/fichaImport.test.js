@@ -199,3 +199,35 @@ test("setficha: un miembro normal no puede importar la ficha", async () => {
   assert.strictEqual(store.saved.length, 0);
   assert.match(reply, /admin/i);
 });
+
+test("ficha pegada: las reglas no se convierten en campos a llenar", () => {
+  const form = parseFichaText(
+    [
+      "FICHA DE INGRESO",
+      "CAMPOS",
+      "# DATOS",
+      "Nombre",
+      "Edad",
+      "# REGLAS",
+      "1. Respetar a los administradores",
+      "• No hacer spam en el grupo",
+      "PIE: Gracias por tu interés.",
+    ].join("\n"),
+  );
+
+  const labels = form.fields.filter((field) => field.label).map((field) => field.label);
+  assert.deepStrictEqual(labels, ["Nombre", "Edad"]);
+  assert.strictEqual(form.notes, 2);
+  assert.match(form.footer, /Respetar a los administradores/);
+  assert.match(form.footer, /No hacer spam/);
+  // La sección REGLAS se queda sin campos: no debe aparecer como título vacío.
+  assert.strictEqual(form.fields.some((field) => field.section === "REGLAS"), false);
+});
+
+test("ficha pegada: un campo con opciones no se confunde con una regla", () => {
+  const form = parseFichaText("Nombre\n¿Aceptas las reglas? | Sí, No");
+  assert.deepStrictEqual(
+    form.fields.filter((field) => field.label).map((field) => field.label),
+    ["Nombre", "¿Aceptas las reglas?"],
+  );
+});
